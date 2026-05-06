@@ -69,25 +69,44 @@ pct=$(awk -v a="$input_total" -v b="$window" 'BEGIN{ printf "%.1f", (a/b)*100 }'
 remain=$(( window - input_total ))
 [ "$remain" -lt 0 ] && remain=0
 
-# Cumulative session totals (sum every assistant usage line).
-totals=$(awk '
-  /"message"/ && /"usage"/ {
-    # Per-line jq is too slow; use grep-style extraction.
-    n = match($0, /"usage":\{[^}]*\}/)
-    if (n == 0) next
-    blk = substr($0, RSTART, RLENGTH)
-    if (match(blk, /"input_tokens":[0-9]+/))            { in_t  += substr(blk, RSTART+15, RLENGTH-15) }
-    if (match(blk, /"output_tokens":[0-9]+/))           { out_t += substr(blk, RSTART+16, RLENGTH-16) }
-    if (match(blk, /"cache_creation_input_tokens":[0-9]+/)) { cc += substr(blk, RSTART+30, RLENGTH-30) }
-    if (match(blk, /"cache_read_input_tokens":[0-9]+/))     { cr += substr(blk, RSTART+25, RLENGTH-25) }
-    msgs++
-  }
-  END { printf "%d %d %d %d %d", msgs, in_t, out_t, cc, cr }
-' "$transcript")
+# Cumulative session totals — proper JSON parsing so we don't miss nested
+# fields (cache_read_input_tokens lives after a nested cache_creation object).
+totals=$(jq -r '
+  select(.type == "assistant" and .message.usage)
+  | [
+      .message.usage.input_tokens // 0,
+      .message.usage.output_tokens // 0,
+      .message.usage.cache_creation_input_tokens // 0,
+      .message.usage.cache_read_input_tokens // 0
+    ] | @tsv
+' "$transcript" 2>/dev/null | awk -F'\t' '
+  { in_t += $1; out_t += $2; cc += $3; cr += $4; msgs++ }
+  END { printf "%d %d %d %d %d", msgs+0, in_t+0, out_t+0, cc+0, cr+0 }
+')
 read -r msgs s_in s_out s_cc s_cr <<<"$totals"
 
 # Pretty number formatter.
 fmt() { printf "%'d" "$1" 2>/dev/null || printf "%d" "$1"; }
+
+# Run the cumulative scan (warm cache → ~50ms; cold → ~2s).
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+"$SCRIPT_DIR/cumulative.py" >/dev/null 2>&1 || true
+
+CACHE_FILE="${HOME}/.claude/cache/claude-info-totals.json"
+
+# This-project lifetime: encode current cwd to the projects/ naming scheme.
+encoded="${cwd//\//-}"
+proj_json=$(jq --arg p "$encoded" '.projects[$p] // {}' "$CACHE_FILE" 2>/dev/null || echo '{}')
+read -r p_cost p_in p_cc p_cr p_out p_msgs p_sessions <<<"$(echo "$proj_json" | jq -r '
+  [(.cost // 0), (.in // 0), (.cc // 0), (.cr // 0), (.out // 0), (.msgs // 0), (.sessions // 0)] | @tsv
+')"
+
+# Global lifetime aggregate.
+read -r l_cost l_in l_cc l_cr l_out l_msgs l_sessions <<<"$(jq -r '
+  [(.lifetime_cost_usd // 0), (.lifetime_input_tokens // 0),
+   (.lifetime_cache_creation // 0), (.lifetime_cache_read // 0),
+   (.lifetime_output_tokens // 0), (.message_count // 0), (.session_count // 0)]
+  | @tsv' "$CACHE_FILE" 2>/dev/null || echo $'0\t0\t0\t0\t0\t0\t0')"
 
 cat <<EOF
 Claude Code session info — $(date '+%Y-%m-%d %H:%M:%S')
@@ -105,12 +124,28 @@ Current context (last API call)
   Output (last reply) : $(fmt "$out_tok")
   Remaining           : $(fmt "$remain") tokens
 
-Session totals (across $msgs assistant messages)
+This session totals ($msgs assistant messages)
   Input tokens        : $(fmt "$s_in")
   Output tokens       : $(fmt "$s_out")
   Cache creation      : $(fmt "$s_cc")
   Cache read          : $(fmt "$s_cr")
 
+This project lifetime ($(fmt "${p_sessions:-0}") sessions, $(fmt "${p_msgs:-0}") assistant messages)
+  Input tokens        : $(fmt "${p_in:-0}")
+  Output tokens       : $(fmt "${p_out:-0}")
+  Cache creation      : $(fmt "${p_cc:-0}")
+  Cache read          : $(fmt "${p_cr:-0}")
+  Estimated cost      : \$$(printf '%.2f' "${p_cost:-0}")  (API rates × token counts;
+                          may differ from your actual bill on subscription)
+
+Across all projects ($(fmt "${l_sessions:-0}") sessions, $(fmt "${l_msgs:-0}") assistant messages)
+  Estimated cost      : \$$(printf '%.2f' "${l_cost:-0}")
+
+Top 10 projects by estimated cost:
+$("$SCRIPT_DIR/cumulative.py" --by-project 2>/dev/null | head -10 | awk -F'\t' '
+  { name=$8; sub(/^-/, "/", name); gsub(/-/, "/", name); printf "  %-50s  $%10.2f  %5d sessions\n", name, $1, $7 }
+')
 Tip: the persistent status line (bottom of the UI) refreshes after every
-assistant turn — it's the live view; this command is the snapshot.
+assistant turn — it shows your project lifetime as Σ\$X.XX next to the
+session cost.
 EOF

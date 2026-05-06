@@ -135,6 +135,33 @@ else
   cost_h=$(printf '$%.2f' "$cost_usd")
 fi
 
+# Per-project total cost (across every session ever run in this project_dir),
+# read from cumulative.py's cache. Refreshes asynchronously when the cache
+# is older than 60 seconds, so the status line itself never blocks.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+LIFETIME_CACHE="${HOME}/.claude/cache/claude-info-totals.json"
+project_cost=""
+if [ -f "$LIFETIME_CACHE" ] && [ -n "$project_dir" ]; then
+  # Encode project_dir to the projects-dir naming scheme: / -> - .
+  encoded="${project_dir//\//-}"
+  project_cost=$(jq -r --arg p "$encoded" '.projects[$p].cost // empty' "$LIFETIME_CACHE" 2>/dev/null)
+fi
+if [ ! -f "$LIFETIME_CACHE" ] || [ -n "$(find "$LIFETIME_CACHE" -mmin +1 2>/dev/null)" ]; then
+  # Detached: fully orphan the refresh so the status line returns immediately.
+  ( "$SCRIPT_DIR/cumulative.py" >/dev/null 2>&1 & ) >/dev/null 2>&1
+fi
+if [ -n "$project_cost" ]; then
+  if awk -v c="$project_cost" 'BEGIN{exit !(c<100)}'; then
+    project_h=$(printf 'Σ$%.2f' "$project_cost")
+  elif awk -v c="$project_cost" 'BEGIN{exit !(c<1000)}'; then
+    project_h=$(printf 'Σ$%.0f' "$project_cost")
+  else
+    project_h=$(printf 'Σ$%.1fk' "$(echo "$project_cost / 1000" | bc -l)")
+  fi
+else
+  project_h=""
+fi
+
 # Display: project basename, plus relative subdir if cwd is below project_dir.
 # Falls back to the current dir if project_dir isn't set or cwd is elsewhere.
 proj_base=""
@@ -204,5 +231,6 @@ if [ "$cache_total" -gt 0 ]; then
 fi
 
 printf '  %s%s%s' "$GREEN" "$cost_h" "$RESET"
+[ -n "$project_h" ] && printf '  %s%s%s' "$DIM" "$project_h" "$RESET"
 printf '  %s%s%s' "$DIM" "$dur_h" "$RESET"
 printf '\n'
