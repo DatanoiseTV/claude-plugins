@@ -39,7 +39,9 @@ done < <(printf '%s' "$input" | jq -r '
   .version // "",
   .effort.level // "",
   .output_style.name // "",
-  .workspace.git_worktree // ""
+  .workspace.git_worktree // "",
+  .context_window.total_input_tokens // 0,
+  .context_window.total_output_tokens // 0
 ')
 model="${f[0]:-claude}"
 dir="${f[1]:-}"
@@ -60,6 +62,8 @@ version="${f[15]:-}"
 effort="${f[16]:-}"
 style="${f[17]:-}"
 worktree="${f[18]:-}"
+session_in_total="${f[19]:-0}"
+session_out_total="${f[20]:-0}"
 
 # ── Colors (ANSI) ──────────────────────────────────────────────────────────
 RESET=$'\033[0m'
@@ -108,6 +112,8 @@ human_tokens() {
 in_h=$(human_tokens "$input_total")
 max_h=$(human_tokens "$window_size")
 out_h=$(human_tokens "$out_tok")
+sess_in_h=$(human_tokens "$session_in_total")
+sess_out_h=$(human_tokens "$session_out_total")
 
 # Cache-hit ratio (read / (read + create)) — 0 when no cache traffic yet.
 cache_total=$(( cache_read + cache_create ))
@@ -218,12 +224,14 @@ printf '%s[%s]%s %s%s%s%s%s%s\n' \
   "$git_seg" "$wt_seg" "$extras"
 
 # ── Line 2: context bar + tokens + cost + duration ────────────────────────
-# Tokens segment — colored by tier so it's scannable at a glance.
-printf '%s%s%s %s%3d%%%s  ctx %s%s%s/%s  out %s%s%s' \
+# - ctx X/Y%   = current context fill (matches the bar)
+# - in X out Y = session-cumulative input/output tokens (live, no API call)
+printf '%s%s%s %s%3d%%%s  ctx %s%s%s/%s  in %s%s%s out %s%s%s' \
   "$bar_color" "$bar" "$RESET" \
   "$bar_color$BOLD" "$pct_int" "$RESET" \
   "$BOLD" "$in_h" "$RESET" "$max_h" \
-  "$DIM" "$out_h" "$RESET"
+  "$BOLD" "$sess_in_h" "$RESET" \
+  "$BOLD" "$sess_out_h" "$RESET"
 
 # Cache hit ratio (only when there's been cache traffic).
 if [ "$cache_total" -gt 0 ]; then
