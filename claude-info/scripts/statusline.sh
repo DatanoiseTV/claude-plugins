@@ -41,7 +41,11 @@ done < <(printf '%s' "$input" | jq -r '
   .output_style.name // "",
   .workspace.git_worktree // "",
   .context_window.total_input_tokens // 0,
-  .context_window.total_output_tokens // 0
+  .context_window.total_output_tokens // 0,
+  .rate_limits.five_hour.used_percentage // "",
+  .rate_limits.five_hour.resets_at // "",
+  .rate_limits.seven_day.used_percentage // "",
+  .rate_limits.seven_day.resets_at // ""
 ')
 model="${f[0]:-claude}"
 dir="${f[1]:-}"
@@ -64,6 +68,10 @@ style="${f[17]:-}"
 worktree="${f[18]:-}"
 session_in_total="${f[19]:-0}"
 session_out_total="${f[20]:-0}"
+rl5_pct="${f[21]:-}"
+rl5_reset="${f[22]:-}"
+rl7_pct="${f[23]:-}"
+rl7_reset="${f[24]:-}"
 
 # ── Colors (ANSI) ──────────────────────────────────────────────────────────
 RESET=$'\033[0m'
@@ -217,11 +225,53 @@ extras=""
 [ -n "$effort" ] && [ "$effort" != "null" ] && extras+=" ${DIM}effort=${effort}${RESET}"
 [ -n "$style" ] && [ "$style" != "null" ] && [ "$style" != "default" ] && extras+=" ${DIM}style=${style}${RESET}"
 
-# ── Line 1: model, dir, git, extras ───────────────────────────────────────
-printf '%s[%s]%s %s%s%s%s%s%s\n' \
+# Rate-limit segments (Pro/Max subscribers only — absent for API users and
+# absent before the first API response. Each window may be independently
+# absent, so check each separately).
+rl_color() {
+  local p=$1 i
+  i=$(printf '%.0f' "$p" 2>/dev/null || echo 0)
+  if   [ "$i" -lt 50 ]; then printf '%s' "$GREEN"
+  elif [ "$i" -lt 80 ]; then printf '%s' "$YELLOW"
+  else                       printf '%s' "$RED"
+  fi
+}
+fmt_until() {
+  local target=$1 now diff h m
+  now=$(date +%s)
+  diff=$((target - now))
+  if   [ "$diff" -le 0 ];     then printf 'now'
+  elif [ "$diff" -lt 3600 ];  then printf '%dm' "$((diff/60))"
+  elif [ "$diff" -lt 86400 ]; then
+    h=$((diff/3600)); m=$(((diff%3600)/60))
+    if [ "$m" -eq 0 ]; then printf '%dh' "$h"; else printf '%dh%dm' "$h" "$m"; fi
+  else
+    printf '%dd' "$((diff/86400))"
+  fi
+}
+rl_seg=""
+if [ -n "$rl5_pct" ]; then
+  c=$(rl_color "$rl5_pct"); pi=$(printf '%.0f' "$rl5_pct")
+  if [ -n "$rl5_reset" ]; then
+    rl_seg+="  ${c}5h ${pi}%·$(fmt_until "$rl5_reset")${RESET}"
+  else
+    rl_seg+="  ${c}5h ${pi}%${RESET}"
+  fi
+fi
+if [ -n "$rl7_pct" ]; then
+  c=$(rl_color "$rl7_pct"); pi=$(printf '%.0f' "$rl7_pct")
+  if [ -n "$rl7_reset" ]; then
+    rl_seg+="  ${c}7d ${pi}%·$(fmt_until "$rl7_reset")${RESET}"
+  else
+    rl_seg+="  ${c}7d ${pi}%${RESET}"
+  fi
+fi
+
+# ── Line 1: model, dir, git, extras, rate limits ─────────────────────────
+printf '%s[%s]%s %s%s%s%s%s%s%s\n' \
   "$BOLD$CYAN" "$model" "$RESET" \
   "$BLUE" "$disp_dir" "$RESET" \
-  "$git_seg" "$wt_seg" "$extras"
+  "$git_seg" "$wt_seg" "$extras" "$rl_seg"
 
 # ── Line 2: context bar + tokens + cost + duration ────────────────────────
 # - ctx X/Y%   = current context fill (matches the bar)

@@ -141,6 +141,11 @@ This project lifetime ($(fmt "${p_sessions:-0}") sessions, $(fmt "${p_msgs:-0}")
 Across all projects ($(fmt "${l_sessions:-0}") sessions, $(fmt "${l_msgs:-0}") assistant messages)
   Estimated cost      : \$$(printf '%.2f' "${l_cost:-0}")
 
+Subscription rate limits (Pro/Max only)
+  Shown live on the status line as "5h N%·Xh" and "7d N%·Yd". This
+  slash command can't read them — they're piped only to the status line
+  by the harness. Watch the bottom bar instead.
+
 Top 10 projects by estimated cost:
 $("$SCRIPT_DIR/cumulative.py" --by-project 2>/dev/null | head -10 | awk -F'\t' '
   { name=$8; sub(/^-/, "/", name); gsub(/-/, "/", name); printf "  %-50s  $%10.2f  %5d sessions\n", name, $1, $7 }
