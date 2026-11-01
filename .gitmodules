@@ -1,0 +1,3 @@
+[submodule "claude-info/vendor/rich"]
+	path = claude-info/vendor/rich
+	url = https://github.com/Textualize/rich.git

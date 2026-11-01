@@ -1,0 +1,12 @@
+# Local working notes (never committed)
+TODO.md
+STRUCTURE.md
+CLAUDE.md
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS
+.DS_Store

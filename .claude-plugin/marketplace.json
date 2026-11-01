@@ -10,10 +10,15 @@
     {
       "name": "claude-info",
       "source": "./claude-info",
-      "description": "Status line and slash command surfacing model, context-window usage, tokens, cost, and duration in the Claude Code UI.",
-      "version": "0.1.0",
+      "description": "Status line and usage report: model mix, tok/s, context, cache state, rate-limit pacing and cost estimates.",
+      "version": "0.2.0",
       "category": "developer-tools",
-      "tags": ["status-line", "context-window", "tokens", "session-info"]
+      "tags": [
+        "status-line",
+        "context-window",
+        "tokens",
+        "session-info"
+      ]
     }
   ]
 }

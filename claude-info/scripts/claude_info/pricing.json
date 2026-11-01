@@ -1,0 +1,49 @@
+{
+  "_source": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "_retrieved": "2026-11-01",
+  "_units": "USD per million tokens. Keys under 'models' are model-id prefixes; the longest matching prefix wins.",
+  "modifiers": {
+    "geo_us_multiplier": 1.1,
+    "geo_us_applies_from": ["claude-fable", "claude-mythos", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5"]
+  },
+  "models": {
+    "claude-fable-5-1":   {"name": "Fable 5.1",  "context": 1000000, "input": 10.00, "cw5m": 12.50, "cw1h": 20.00, "read": 0.25, "output": 50.00},
+    "claude-mythos-5-1":  {"name": "Mythos 5.1", "context": 1000000, "input": 10.00, "cw5m": 12.50, "cw1h": 20.00, "read": 0.25, "output": 50.00},
+    "claude-fable-5":     {"name": "Fable 5",    "context": 1000000, "input": 10.00, "cw5m": 12.50, "cw1h": 20.00, "read": 1.00, "output": 50.00},
+    "claude-mythos-5":    {"name": "Mythos 5",   "context": 1000000, "input": 10.00, "cw5m": 12.50, "cw1h": 20.00, "read": 1.00, "output": 50.00},
+
+    "claude-opus-5-5":    {"name": "Opus 5.5",   "context": 1000000, "input": 4.00,  "cw5m": 5.00,  "cw1h": 8.00,  "read": 0.20, "output": 20.00,
+                           "fast": {"input": 8.00, "output": 40.00}},
+    "claude-opus-5":      {"name": "Opus 5",     "context": 1000000, "input": 5.00,  "cw5m": 6.25,  "cw1h": 10.00, "read": 0.50, "output": 25.00,
+                           "fast": {"input": 10.00, "output": 50.00}},
+    "claude-opus-4-8":    {"name": "Opus 4.8",   "context": 1000000, "input": 5.00,  "cw5m": 6.25,  "cw1h": 10.00, "read": 0.50, "output": 25.00,
+                           "fast": {"input": 10.00, "output": 50.00}},
+    "claude-opus-4-7":    {"name": "Opus 4.7",   "context": 1000000, "input": 5.00,  "cw5m": 6.25,  "cw1h": 10.00, "read": 0.50, "output": 25.00},
+    "claude-opus-4-6":    {"name": "Opus 4.6",   "context": 1000000, "input": 5.00,  "cw5m": 6.25,  "cw1h": 10.00, "read": 0.50, "output": 25.00},
+    "claude-opus-4-5":    {"name": "Opus 4.5",   "context": 200000,  "input": 5.00,  "cw5m": 6.25,  "cw1h": 10.00, "read": 0.50, "output": 25.00},
+    "claude-opus-4-1":    {"name": "Opus 4.1",   "context": 200000,  "input": 15.00, "cw5m": 18.75, "cw1h": 30.00, "read": 1.50, "output": 75.00},
+    "claude-opus-4":      {"name": "Opus 4",     "context": 200000,  "input": 15.00, "cw5m": 18.75, "cw1h": 30.00, "read": 1.50, "output": 75.00},
+    "claude-3-opus":      {"name": "Opus 3",     "context": 200000,  "input": 15.00, "cw5m": 18.75, "cw1h": 30.00, "read": 1.50, "output": 75.00},
+
+    "claude-sonnet-5-5":  {"name": "Sonnet 5.5", "context": 1000000, "input": 2.00,  "cw5m": 2.50,  "cw1h": 4.00,  "read": 0.10, "output": 10.00},
+    "claude-sonnet-5":    {"name": "Sonnet 5",   "context": 1000000, "input": 2.00,  "cw5m": 2.50,  "cw1h": 4.00,  "read": 0.20, "output": 10.00},
+    "claude-sonnet-4-6":  {"name": "Sonnet 4.6", "context": 1000000, "input": 3.00,  "cw5m": 3.75,  "cw1h": 6.00,  "read": 0.30, "output": 15.00},
+    "claude-sonnet-4-5":  {"name": "Sonnet 4.5", "context": 200000,  "input": 3.00,  "cw5m": 3.75,  "cw1h": 6.00,  "read": 0.30, "output": 15.00},
+    "claude-sonnet-4":    {"name": "Sonnet 4",   "context": 200000,  "input": 3.00,  "cw5m": 3.75,  "cw1h": 6.00,  "read": 0.30, "output": 15.00},
+    "claude-3-7-sonnet":  {"name": "Sonnet 3.7", "context": 200000,  "input": 3.00,  "cw5m": 3.75,  "cw1h": 6.00,  "read": 0.30, "output": 15.00},
+
+    "claude-haiku-5-5":   {"name": "Haiku 5.5",  "context": 1000000, "input": 0.10,  "cw5m": 0.125, "cw1h": 0.20,  "read": 0.01, "output": 0.50,
+                           "long": {"threshold": 100000, "input": 0.50, "cw5m": 0.625, "cw1h": 1.00, "read": 0.05, "output": 2.50}},
+    "claude-haiku-4-5":   {"name": "Haiku 4.5",  "context": 200000,  "input": 1.00,  "cw5m": 1.25,  "cw1h": 2.00,  "read": 0.10, "output": 5.00},
+    "claude-3-5-haiku":   {"name": "Haiku 3.5",  "context": 200000,  "input": 0.80,  "cw5m": 1.00,  "cw1h": 1.60,  "read": 0.08, "output": 4.00},
+    "claude-3-haiku":     {"name": "Haiku 3",    "context": 200000,  "input": 0.25,  "cw5m": 0.30,  "cw1h": 0.50,  "read": 0.03, "output": 1.25}
+  },
+  "families": {
+    "_comment": "Fallback for model ids not listed above (e.g. a model released after this file was updated).",
+    "fable": "claude-fable-5-1",
+    "mythos": "claude-mythos-5-1",
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "haiku": "claude-haiku-5-5"
+  }
+}
