@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from . import config, gitinfo, pricing, totals, usage
+from . import box, config, gitinfo, pricing, totals, usage
 from . import fmt as F
 from .limits import pace
 
@@ -43,6 +43,7 @@ class Ctx:
     session: Optional[dict] = None   # usage.scan_session result
     summary: Optional[dict] = None   # totals summary
     cols: Optional[int] = None
+    graphs: bool = False             # draw sparklines, gauges and spinners
 
     def get(self, *path, default=None):
         cur = self.j
@@ -87,7 +88,46 @@ def seg_speed(ctx: Ctx) -> Optional[Seg]:
     tps = usage.tokens_per_second(ctx.session["main"])
     if tps is None:
         return None
-    return Seg(F.paint(f"{tps:.0f} t/s", F.DIM), 45)
+    out = F.paint(f"{tps:.0f} t/s", F.DIM)
+    if ctx.graphs:
+        hist = usage.rate_history(ctx.session["main"])[-ctx.cfg["rate_spark_len"]:]
+        if len(hist) > 1:
+            out += " " + F.paint(F.spark(hist), F.CYAN)
+    return Seg(out, 45)
+
+
+_PHASE_STYLE = {"thinking": F.MAGENTA, "writing": F.CYAN, "tools": F.YELLOW}
+
+
+def seg_phase(ctx: Ctx) -> Optional[Seg]:
+    """What the main thread is doing right now, with a spinner and how long
+    it has been at it. Absent when the turn is over."""
+    if not ctx.session:
+        return None
+    ph = usage.phase(ctx.session["main"], ctx.now, ctx.cfg["phase_stale_s"])
+    if ph is None:
+        return None
+    name, age = ph
+    color = _PHASE_STYLE.get(name, F.CYAN)
+    spin = F.spinner(ctx.now, ctx.cfg["spinner_fps"])
+    return Seg(F.paint(f"{spin} {name}", color) + F.paint(f" {F.duration(age)}", F.DIM), 92)
+
+
+def seg_context_trend(ctx: Ctx) -> Optional[Seg]:
+    """Context size over the last requests and its average growth, which
+    tells how fast the window is filling (and shows compactions as drops)."""
+    if not ctx.session or not ctx.graphs:
+        return None
+    hist = (ctx.session["main"].get("ctx_hist") or [])[-ctx.cfg["context_spark_len"]:]
+    if len(hist) < 3:
+        return None
+    out = F.paint(F.spark(hist, floor_zero=False), F.BLUE)
+    growth = (hist[-1] - hist[0]) / (len(hist) - 1)
+    if growth >= 0:
+        out += F.paint(f" +{F.tokens(growth)}/req", F.DIM)
+    else:
+        out += F.paint(" compacted", F.DIM)
+    return Seg(out, 60)
 
 
 def seg_model_mix(ctx: Ctx) -> Optional[Seg]:
@@ -210,7 +250,8 @@ def seg_agents(ctx: Ctx) -> Optional[Seg]:
     if not agents:
         return None
     label = f"{len(agents)} agent" + ("s" if len(agents) != 1 else "")
-    out = F.paint(label, F.CYAN)
+    spin = F.spinner(ctx.now + 0.5, ctx.cfg["spinner_fps"]) + " " if ctx.graphs else ""
+    out = F.paint(spin + label, F.CYAN)
     known = [a["tps"] for a in agents if a["tps"]]
     if not known:
         return Seg(out, 60)
@@ -317,8 +358,14 @@ def seg_cache(ctx: Ctx) -> Optional[Seg]:
         exp = pc.get("expires_at")
         if exp:
             left = float(exp) - ctx.now
-            if left <= cfg["cache_countdown_s"]:
-                color = F.YELLOW if left <= cfg["cache_expiry_warn_s"] else F.DIM
+            color = F.YELLOW if left <= cfg["cache_expiry_warn_s"] else F.DIM
+            if ctx.graphs:
+                ttl = 3600.0 if pc.get("ttl") == "1h" else 300.0
+                parts.append(F.paint("cache ", color)
+                             + F.drain(left / ttl, cfg["cache_drain_width"],
+                                       F.YELLOW if left <= cfg["cache_expiry_warn_s"] else F.GREEN)
+                             + F.paint(f" {F.duration(left)}", color))
+            elif left <= cfg["cache_countdown_s"]:
                 parts.append(F.paint(f"cache {F.duration(left)}", color))
 
     last_miss = pc.get("last_miss_at")
@@ -342,7 +389,13 @@ def _limit_text(ctx: Ctx, label: str, used: float, resets_at, window_s: float) -
     p = pace(used, resets_at, window_s, ctx.now, cfg["pace_min_elapsed"])
     heading = p.projected if p.projected is not None else used
     color = F.tier(heading, cfg["limit_warn_pct"], cfg["limit_crit_pct"])
-    out = F.paint(f"{label} {used:.0f}%", color)
+    out = F.paint(label, color) + " "
+    if ctx.graphs:
+        elapsed = None
+        if p.reset_in is not None and window_s > 0:
+            elapsed = 100.0 * (1 - p.reset_in / window_s)
+        out += F.gauge(used, elapsed, cfg["limit_gauge_width"], color) + " "
+    out += F.paint(f"{used:.0f}%", color)
     if p.will_hit:
         out += F.paint(f" full in {F.duration(p.full_in)}", F.BOLD, F.RED)
         out += F.paint(f" ↻{F.duration(p.reset_in)}", F.DIM)
@@ -353,7 +406,8 @@ def _limit_text(ctx: Ctx, label: str, used: float, resets_at, window_s: float) -
     return out
 
 
-def seg_limits(ctx: Ctx) -> List[Seg]:
+def seg_windows(ctx: Ctx) -> List[Seg]:
+    """5-hour and 7-day subscription windows."""
     if not ctx.show("limits"):
         return []
     rl = ctx.get("rate_limits", default={}) or {}
@@ -364,15 +418,24 @@ def seg_limits(ctx: Ctx) -> List[Seg]:
         if w and w.get("used_percentage") is not None:
             segs.append(Seg(_limit_text(ctx, label, float(w["used_percentage"]),
                                         w.get("resets_at"), windows[key]), prio))
-    spend = rl.get("spend_limit")
-    if spend and spend.get("used_percentage") is not None:
-        days = ctx.cfg["spend_period_days"].get(spend.get("period", ""), 0)
-        text = _limit_text(ctx, "spend", float(spend["used_percentage"]),
-                           spend.get("resets_at"), days * 86400)
-        if spend.get("used_usd") is not None and spend.get("limit_usd"):
-            text += F.paint(f" {F.money(spend['used_usd'])}/{F.money(spend['limit_usd'])}", F.DIM)
-        segs.append(Seg(text, 85))
     return segs
+
+
+def seg_spend(ctx: Ctx) -> Optional[Seg]:
+    """Gateway spend limit, when one applies."""
+    spend = (ctx.get("rate_limits", default={}) or {}).get("spend_limit")
+    if not spend or spend.get("used_percentage") is None or not ctx.show("limits"):
+        return None
+    days = ctx.cfg["spend_period_days"].get(spend.get("period", ""), 0)
+    text = _limit_text(ctx, "spend", float(spend["used_percentage"]),
+                       spend.get("resets_at"), days * 86400)
+    if spend.get("used_usd") is not None and spend.get("limit_usd"):
+        text += F.paint(f" {F.money(spend['used_usd'])}/{F.money(spend['limit_usd'])}", F.DIM)
+    return Seg(text, 85)
+
+
+def seg_limits(ctx: Ctx) -> List[Seg]:
+    return _flat(seg_windows(ctx), seg_spend(ctx))
 
 
 def seg_lines(ctx: Ctx) -> Optional[Seg]:
@@ -388,9 +451,16 @@ def seg_lifetime(ctx: Ctx) -> List[Seg]:
         return []
     segs = []
     today = time.strftime("%Y-%m-%d", time.localtime(ctx.now))
-    day = (ctx.summary.get("days") or {}).get(today)
+    days = ctx.summary.get("days") or {}
+    day = days.get(today)
     if day and day.get("cost"):
-        segs.append(Seg(F.paint(f"today {F.money(day['cost'])}", F.DIM), 25))
+        text = F.paint(f"today {F.money(day['cost'])}", F.DIM)
+        if ctx.graphs:
+            n = ctx.cfg["spend_spark_days"]
+            series = [days.get(time.strftime("%Y-%m-%d", time.localtime(ctx.now - i * 86400)), {})
+                      .get("cost", 0.0) for i in range(n - 1, -1, -1)]
+            text += " " + F.paint(F.spark(series), F.GREEN)
+        segs.append(Seg(text, 25))
     tp = ctx.get("transcript_path", default="")
     if tp:
         proj = (ctx.summary.get("projects") or {}).get(Path(tp).parent.name)
@@ -432,8 +502,8 @@ def _flat(*items) -> List[Seg]:
     return out
 
 
-def render(ctx: Ctx) -> str:
-    width = ctx.cols - ctx.cfg["right_margin"] if ctx.cols else None
+def render_lines(ctx: Ctx, width: Optional[int]) -> str:
+    """Compact two-line layout without a frame."""
     line1 = _flat(seg_model(ctx), seg_speed(ctx), seg_model_mix(ctx), seg_location(ctx),
                   seg_git(ctx), seg_pr(ctx), seg_agents(ctx), seg_session_name(ctx))
     line2 = _flat(seg_context(ctx), seg_cost(ctx), seg_burn(ctx), seg_cache(ctx),
@@ -441,9 +511,45 @@ def render(ctx: Ctx) -> str:
     return fit(line1, width) + "\n" + fit(line2, width)
 
 
+def _cell(*segs: Optional[Seg]) -> str:
+    return SEP.join(s.text for s in segs if s and s.text)
+
+
+def _parts(*segs) -> List[box.Part]:
+    return [box.Part(s.text, s.prio) for s in _flat(*segs)]
+
+
+def render_box(ctx: Ctx, width: Optional[int]) -> str:
+    """Framed grid: identity in the top border, a two-row grid of context,
+    cost, limits and activity, session facts in the bottom border."""
+    windows = seg_windows(ctx)
+    lifetime = seg_lifetime(ctx)
+
+    columns = [
+        box.Column([_cell(seg_context(ctx)), _cell(seg_context_trend(ctx))], prio=100),
+        box.Column([_cell(seg_cost(ctx), seg_burn(ctx)), _cell(*lifetime)], prio=95),
+        box.Column([_cell(windows[0]) if windows else "", _cell(windows[1]) if len(windows) > 1 else ""],
+                   prio=85),
+        box.Column([_cell(seg_spend(ctx)), ""], prio=80),
+        box.Column([_cell(seg_cache(ctx)), _cell(seg_agents(ctx))], prio=75),
+    ]
+    left = _parts(seg_model(ctx), seg_phase(ctx), seg_speed(ctx))
+    right = _parts(seg_location(ctx), seg_git(ctx), seg_pr(ctx))
+    footer = _parts(seg_model_mix(ctx), seg_lines(ctx), seg_duration(ctx), seg_session_name(ctx))
+    return box.render(left, right, columns, footer, width)
+
+
+def render(ctx: Ctx) -> str:
+    width = ctx.cols - ctx.cfg["right_margin"] if ctx.cols else None
+    if ctx.cfg.get("layout") == "lines":
+        return render_lines(ctx, width)
+    return render_box(ctx, width)
+
+
 def build_context(j: dict, now: Optional[float] = None) -> Ctx:
     cfg = config.load()
     ctx = Ctx(j=j, cfg=cfg, now=now or time.time(), prices=pricing.default())
+    ctx.graphs = cfg.get("layout") != "lines"
     try:
         ctx.cols = int(os.environ.get("COLUMNS", ""))
     except ValueError:

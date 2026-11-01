@@ -42,7 +42,9 @@ class RenderTest(unittest.TestCase):
         root = Path(self.tmp.name)
         self.env = {k: os.environ.get(k) for k in ("CLAUDE_INFO_CACHE_DIR", "CLAUDE_INFO_CONFIG", "COLUMNS")}
         os.environ["CLAUDE_INFO_CACHE_DIR"] = str(root / "cache")
-        os.environ["CLAUDE_INFO_CONFIG"] = str(root / "none.json")
+        # Segment tests read the plain two-line layout; the box has its own tests.
+        (root / "cfg.json").write_text(json.dumps({"layout": "lines"}))
+        os.environ["CLAUDE_INFO_CONFIG"] = str(root / "cfg.json")
         os.environ.pop("COLUMNS", None)
         self.proj = root / "projects" / "-tmp-demo"
         self.proj.mkdir(parents=True)
@@ -153,6 +155,35 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(l1.startswith("Opus 5.5"))
         self.assertIn("10%", l2)
         self.assertLessEqual(len(l2), 50)
+
+    def render_box(self, cols):
+        os.environ["COLUMNS"] = str(cols)
+        j = json.loads(json.dumps(self.j))
+        j["rate_limits"]["seven_day"] = {"used_percentage": 10, "resets_at": self.now + 6 * 86400}
+        ctx = statusline.build_context(j, now=self.now)
+        ctx.summary = None
+        ctx.graphs = True
+        return plain(statusline.render_box(ctx, cols - ctx.cfg["right_margin"])).split("\n")
+
+    def test_box_grid(self):
+        lines = self.render_box(140)
+        self.assertEqual(len(lines), 4)
+        self.assertTrue(lines[0].startswith("╭─ Opus 5.5"))
+        self.assertTrue(lines[-1].startswith("╰─ +Haiku 5.5 21% · +10 −2"))
+        self.assertEqual({len(ln) for ln in lines}, {136})
+        # Column separators line up across both body rows.
+        seps = [[i for i, ch in enumerate(ln) if ch == "│"] for ln in lines[1:3]]
+        self.assertEqual(seps[0], seps[1])
+        # Gauge: half used, a fifth of the window elapsed -> marker in cell 1.
+        self.assertIn("5h ━┃━━──── 50%", lines[1])
+        self.assertIn("cache ▰▰▰▰▱ 4m", lines[1])
+        self.assertIn("7d ", lines[2])
+
+    def test_box_drops_columns_when_narrow(self):
+        lines = self.render_box(50)
+        self.assertEqual({len(ln) for ln in lines}, {46})
+        self.assertIn("10%", lines[1])
+        self.assertNotIn("5h", "".join(lines))
 
     def test_minimal_input(self):
         out = self.render_raw({})

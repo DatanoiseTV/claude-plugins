@@ -50,7 +50,18 @@ DEFAULTS: dict = {
     "lifetime_refresh_s": 60,
     "lifetime_lock_stale_s": 300,
 
-    # Layout
+    # Graphs and animation. The spinner advances with wall time, so it moves
+    # whenever the status line is re-rendered (events, refreshInterval).
+    "spinner_fps": 1.0,
+    "phase_stale_s": 900,
+    "rate_spark_len": 8,
+    "context_spark_len": 12,
+    "spend_spark_days": 7,
+    "limit_gauge_width": 8,
+    "cache_drain_width": 5,
+
+    # Layout: "box" (framed grid) or "lines" (two plain lines)
+    "layout": "box",
     "right_margin": 4,
     # /claude-info width when not writing to a terminal (shown in a code block)
     "report_width": 100,
