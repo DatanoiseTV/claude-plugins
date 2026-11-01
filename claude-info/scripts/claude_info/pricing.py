@@ -137,6 +137,21 @@ class Pricing:
         return rates.cost(usage) if rates else 0.0
 
 
+def cache_savings(prices: "Pricing", models: dict) -> tuple:
+    """(actual cost, cost had every cached token been sent as plain input)
+    for per-model totals as produced by usage.by_model."""
+    actual = uncached = 0.0
+    for mid, t in models.items():
+        rates = prices.rates(mid)
+        if rates is None:
+            continue
+        cached_part = (t["read"] * rates.read + t["cw5m"] * rates.cw5m + t["cw1h"] * rates.cw1h) / 1e6
+        as_input = (t["read"] + t["cw5m"] + t["cw1h"]) * rates.input / 1e6
+        actual += t["cost"]
+        uncached += t["cost"] - cached_part + as_input
+    return actual, uncached
+
+
 _default: Optional[Pricing] = None
 
 

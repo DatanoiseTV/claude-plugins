@@ -99,20 +99,6 @@ def find_session(cwd: str, projects: Path) -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
-def cache_savings(prices: pricing.Pricing, models: Dict[str, dict]) -> tuple:
-    """(actual cost, cost had every cached token been sent as plain input)."""
-    actual = uncached = 0.0
-    for mid, t in models.items():
-        rates = prices.rates(mid)
-        if rates is None:
-            continue
-        cached_part = (t["read"] * rates.read + t["cw5m"] * rates.cw5m + t["cw1h"] * rates.cw1h) / 1e6
-        as_input = (t["read"] + t["cw5m"] + t["cw1h"]) * rates.input / 1e6
-        actual += t["cost"]
-        uncached += t["cost"] - cached_part + as_input
-    return actual, uncached
-
-
 def model_rows(prices: pricing.Pricing, models: Dict[str, dict]) -> List[dict]:
     rows = []
     total = sum(t["cost"] for t in models.values()) or 1.0
@@ -133,7 +119,7 @@ def collect_session(transcript: Path, prices: pricing.Pricing) -> dict:
     cfg = config.load()
     res = usage.scan_session(transcript, config.cache_dir(), transcript.stem, prices)
     models = usage.by_model(res["all"])
-    actual, uncached = cache_savings(prices, models)
+    actual, uncached = pricing.cache_savings(prices, models)
     main_cost = usage.total([res["main"]])["cost"]
 
     agents = []

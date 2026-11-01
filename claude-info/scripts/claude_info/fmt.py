@@ -148,3 +148,18 @@ def drain(frac_left: float, width: int, color: str) -> str:
     """Bar that empties as time runs out."""
     n = max(0, min(width, round(frac_left * width)))
     return paint("▰" * n, color) + paint("▱" * (width - n), DIM)
+
+
+def stacked(parts, width: int) -> str:
+    """Bar split into coloured shares, e.g. [(0.9, GREEN), (0.1, RED)].
+    Any non-zero share gets at least one cell so it stays visible."""
+    total = sum(max(0.0, f) for f, _ in parts)
+    if total <= 0 or width <= 0:
+        return paint("·" * width, DIM)
+    cells = [max(1, round(f / total * width)) if f > 0 else 0 for f, _ in parts]
+    # Take any overflow from the largest share.
+    while sum(cells) > width:
+        cells[cells.index(max(cells))] -= 1
+    while sum(cells) < width:
+        cells[cells.index(max(cells))] += 1
+    return "".join(paint("█" * n, color) for n, (_, color) in zip(cells, parts) if n)

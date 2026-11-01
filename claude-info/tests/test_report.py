@@ -9,6 +9,7 @@ from _path import add_scripts_dir
 add_scripts_dir()
 
 from claude_info import report  # noqa: E402
+from claude_info import pricing  # noqa: E402
 from claude_info.pricing import default  # noqa: E402
 
 
@@ -31,7 +32,7 @@ class DataTest(unittest.TestCase):
     def test_cache_savings(self):
         models = {"claude-opus-5-5": {"input": 0, "cw5m": 0, "cw1h": 0, "read": 1_000_000,
                                       "output": 0, "requests": 1, "cost": 0.20}}
-        actual, uncached = report.cache_savings(default(), models)
+        actual, uncached = pricing.cache_savings(default(), models)
         self.assertAlmostEqual(actual, 0.20)
         self.assertAlmostEqual(uncached, 4.00)
 

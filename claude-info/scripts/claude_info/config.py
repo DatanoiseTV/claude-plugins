@@ -27,6 +27,13 @@ DEFAULTS: dict = {
     # projections swing wildly on a single large request.
     "pace_min_elapsed": 0.08,
     "windows_s": {"five_hour": 18000, "seven_day": 604800},
+    # Span of recent history used for "time left at the current pace", the
+    # minimum history needed before trusting it, and how much to keep.
+    "limit_rate_span_s": {"five_hour": 1800, "seven_day": 21600, "spend": 21600},
+    "limit_rate_min_span_s": 300,
+    "limit_history_keep_s": 86400,
+    # Don't show "~X left" beyond this; at that point it means "plenty".
+    "limit_left_max_s": 14 * 86400,
     "spend_period_days": {"daily": 1, "weekly": 7, "monthly": 30},
 
     # Prompt cache
@@ -41,8 +48,20 @@ DEFAULTS: dict = {
     "model_mix_min_share": 0.03,
     "model_mix_max": 2,
 
-    # Subagents whose transcript is idle this long count as stale, not running.
-    "agent_stale_s": 600,
+    # Subagents: no transcript output for agent_stall_s marks an agent as
+    # stalled (unless it is inside a tool call); after agent_stale_s it is
+    # treated as abandoned and hidden. Finished agents stay visible for
+    # agent_done_show_s.
+    "agent_stall_s": 180,
+    "agent_tool_stall_s": 900,
+    "agent_stale_s": 1800,
+    "agent_done_show_s": 60,
+    "agents_max_rows": 5,
+    "agent_files_shown": 2,
+    "agent_files_width": 28,
+    "main_files_shown": 3,
+    # Longest tool description in the title, e.g. "Bash: make test".
+    "activity_title_max": 40,
     # Up to this many running agents get individual rates; more show a sum.
     "agents_max_rates": 3,
 
@@ -62,6 +81,7 @@ DEFAULTS: dict = {
     "spend_spark_days": 7,
     "limit_gauge_width": 8,
     "cache_drain_width": 5,
+    "cache_mix_width": 8,
 
     # Layout: "box" (framed grid) or "lines" (two plain lines)
     "layout": "box",
@@ -73,6 +93,8 @@ DEFAULTS: dict = {
     "show": {
         "model_mix": True,
         "git": True,
+        "agents": True,
+        "edited_files": True,
         "pr": True,
         "session_name": True,
         "cache": True,

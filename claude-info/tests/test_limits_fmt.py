@@ -5,6 +5,7 @@ from _path import add_scripts_dir
 add_scripts_dir()
 
 from claude_info import fmt  # noqa: E402
+from claude_info import limits  # noqa: E402
 from claude_info.limits import pace  # noqa: E402
 
 H = 3600
@@ -37,6 +38,35 @@ class PaceTest(unittest.TestCase):
         p = pace(100, resets_at=H, window_s=5 * H, now=0)
         self.assertEqual(p.full_in, 0)
         self.assertTrue(p.will_hit)
+
+
+class RecentRateTest(unittest.TestCase):
+    def test_record_and_rate(self):
+        hist = []
+        for i in range(11):  # 10% over 10 minutes
+            hist, _ = limits.record(hist, 1000 + i * 60, 20 + i, keep_s=86400)
+        rate = limits.recent_rate(hist, 1600, span_s=1800, min_span_s=300)
+        self.assertAlmostEqual(rate, 10 / 600)
+        self.assertAlmostEqual(limits.time_left(30, rate), 70 * 60)
+
+    def test_reset_clears_history(self):
+        hist = [[0, 80.0], [60, 85.0]]
+        hist, _ = limits.record(hist, 120, 2.0, keep_s=86400)
+        self.assertEqual(hist, [[120, 2.0]])
+
+    def test_needs_enough_history(self):
+        hist = [[0, 10.0], [100, 12.0]]
+        self.assertIsNone(limits.recent_rate(hist, 100, span_s=1800, min_span_s=300))
+
+    def test_idle_is_zero_and_unbounded(self):
+        hist = [[0, 10.0], [600, 10.0]]
+        rate = limits.recent_rate(hist, 600, span_s=1800, min_span_s=300)
+        self.assertEqual(rate, 0)
+        self.assertIsNone(limits.time_left(10, rate))
+
+    def test_no_duplicate_samples(self):
+        hist, added = limits.record([[0, 10.0]], 5, 10.0, keep_s=86400)
+        self.assertFalse(added)
 
 
 class FmtTest(unittest.TestCase):
@@ -76,6 +106,15 @@ class FmtTest(unittest.TestCase):
         g = fmt._ESC_RE.sub("", fmt.gauge(50, 25, 8, fmt.GREEN))
         self.assertEqual(g, "━━┃━────")
         self.assertEqual(fmt._ESC_RE.sub("", fmt.drain(0.6, 5, fmt.GREEN)), "▰▰▰▱▱")
+
+    def test_stacked_keeps_small_shares_visible(self):
+        import re
+        bar = fmt.stacked([(980, fmt.GREEN), (18, fmt.YELLOW), (2, fmt.RED)], 8)
+        self.assertEqual(fmt._ESC_RE.sub("", bar), "█" * 8)
+        if fmt._COLOR:
+            runs = {code: len(cells) for code, cells in re.findall(r"\033\[(\d+)m(█+)", bar)}
+            self.assertEqual(runs, {"32": 6, "33": 1, "31": 1})
+        self.assertEqual(len(fmt._ESC_RE.sub("", fmt.stacked([(0, fmt.GREEN)], 5))), 5)
 
     def test_spinner_advances(self):
         self.assertNotEqual(fmt.spinner(0, 1), fmt.spinner(1, 1))

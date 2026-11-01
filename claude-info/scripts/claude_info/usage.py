@@ -24,7 +24,7 @@ from typing import Dict, Iterable, List, Optional
 
 from . import pricing as pricing_mod
 
-STATE_VERSION = 3
+STATE_VERSION = 4
 
 # Duplicate lines of one response are adjacent, so a short window of recent
 # ids is enough to deduplicate without storing every id of every file.
@@ -98,6 +98,59 @@ def new_file_state() -> dict:
             "req_start": None, "cur": None, "samples": [],
             # [phase, since_epoch] and recent context sizes per request.
             "phase": ["idle", 0], "ctx_hist": []}
+
+
+ACTIVITY_MAX = 120
+# Recently edited files kept per transcript, most recent first.
+EDITED_FILES = 5
+_EDIT_TOOLS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
+# Tool calls that end a subagent's work rather than describe it.
+_HANDBACK_TOOLS = ("SubagentHandback",)
+
+
+def _clip(text: str, n: int = ACTIVITY_MAX) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _main_command(command: str) -> str:
+    """The part of a shell command that says what it does: first line,
+    without leading `cd dir &&` / `cd dir;` steps."""
+    line = command.strip().splitlines()[0] if command.strip() else ""
+    parts = [p.strip() for p in re.split(r"&&|;", line) if p.strip()]
+    while len(parts) > 1 and parts[0].startswith("cd "):
+        parts.pop(0)
+    return " && ".join(parts)
+
+
+def summarize_tool(name: str, inp: dict) -> str:
+    """Short description of a tool call: what it acts on, not how."""
+    inp = inp if isinstance(inp, dict) else {}
+    if name in ("Bash", "Monitor"):
+        cmd = inp.get("description") or _main_command(inp.get("command") or "")
+        return _clip(f"{name}: {cmd}") if cmd else name
+    for key in ("file_path", "notebook_path", "path"):
+        if inp.get(key):
+            return _clip(f"{name} {Path(str(inp[key])).name}")
+    for key in ("pattern", "query", "url", "description", "skill", "prompt"):
+        if inp.get(key):
+            return _clip(f'{name} "{inp[key]}"' if key in ("pattern", "query") else f"{name} {inp[key]}")
+    return name
+
+
+def edited_files(state: dict) -> List[str]:
+    """Paths of recently edited files, most recent first."""
+    return list(state.get("edited") or [])
+
+
+def handed_back(state: dict) -> bool:
+    return bool(state.get("handed_back"))
+
+
+def activity(state: dict) -> str:
+    """What the transcript's thread did last, e.g. 'Edit sdma.c'."""
+    a = state.get("activity")
+    return a if isinstance(a, str) else ""
 
 
 def _set_phase(state: dict, name: str, t: Optional[float]) -> None:
@@ -254,6 +307,23 @@ def scan_file(path: Path, state: Optional[dict], prices: pricing_mod.Pricing) ->
             kind = blocks[-1].get("type") if blocks and isinstance(blocks[-1], dict) else ""
             if kind in _BLOCK_PHASE:
                 _set_phase(state, _BLOCK_PHASE[kind], epoch(ts))
+        blocks = msg.get("content") or []
+        last = blocks[-1] if blocks and isinstance(blocks[-1], dict) else {}
+        if last.get("type") in ("tool_use", "server_tool_use"):
+            name = last.get("name", "tool")
+            inp = last.get("input") or {}
+            if name in _HANDBACK_TOOLS:
+                # Keep the last real action; the handback itself says nothing.
+                state["handed_back"] = True
+            else:
+                state["activity"] = summarize_tool(name, inp)
+                state["handed_back"] = False
+            path = isinstance(inp, dict) and (inp.get("file_path") or inp.get("notebook_path"))
+            if name in _EDIT_TOOLS and path:
+                files = [f for f in state.get("edited") or [] if f != path]
+                state["edited"] = ([str(path)] + files)[:EDITED_FILES]
+        elif last.get("type") == "text" and (last.get("text") or "").strip():
+            state["activity"] = _clip(last["text"])
 
         # Throughput: lines of one response share an id and arrive as its
         # content blocks complete, so the last one marks the end.

@@ -40,8 +40,11 @@ class RenderTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.env = {k: os.environ.get(k) for k in ("CLAUDE_INFO_CACHE_DIR", "CLAUDE_INFO_CONFIG", "COLUMNS")}
+        self.env = {k: os.environ.get(k) for k in
+                    ("CLAUDE_INFO_CACHE_DIR", "CLAUDE_INFO_CONFIG", "CLAUDE_INFO_PROJECTS_DIR", "COLUMNS")}
         os.environ["CLAUDE_INFO_CACHE_DIR"] = str(root / "cache")
+        # Background refreshes must scan the fixture, not the real transcripts.
+        os.environ["CLAUDE_INFO_PROJECTS_DIR"] = str(root / "projects")
         # Segment tests read the plain two-line layout; the box has its own tests.
         (root / "cfg.json").write_text(json.dumps({"layout": "lines"}))
         os.environ["CLAUDE_INFO_CONFIG"] = str(root / "cfg.json")
@@ -149,6 +152,42 @@ class RenderTest(unittest.TestCase):
         (sub / "agent-x.meta.json").write_text(json.dumps({"finished": True}))
         self.assertNotIn("agent", self.render().split("\n")[0])
 
+    def _agent(self, name, lines, finished=False, age=0):
+        sub = self.proj / "sess" / "subagents"
+        sub.mkdir(parents=True, exist_ok=True)
+        f = sub / f"{name}.jsonl"
+        f.write_text("\n".join(lines) + "\n")
+        (sub / f"{name}.meta.json").write_text(json.dumps({"finished": finished, "description": name}))
+        os.utime(f, (self.now - age, self.now - age))
+
+    def _tool_line(self, mid, name, inp, ts="2026-11-01T10:00:05Z"):
+        return json.dumps({"type": "assistant", "timestamp": ts, "message": {
+            "id": mid, "model": "claude-haiku-5-5", "stop_reason": "tool_use",
+            "content": [{"type": "tool_use", "name": name, "input": inp}],
+            "usage": {"input_tokens": 10, "output_tokens": 500}}})
+
+    def test_agent_states(self):
+        req = request("2026-11-01T10:00:00Z")
+        self._agent("busy", [req, self._tool_line("b1", "Edit", {"file_path": "/p/dma.c"})])
+        self._agent("hung", [req, json.dumps({"type": "assistant", "timestamp": "2026-11-01T10:00:05Z",
+                     "message": {"id": "h1", "model": "claude-haiku-5-5", "stop_reason": None,
+                                 "content": [{"type": "thinking"}],
+                                 "usage": {"input_tokens": 1, "output_tokens": 1}}})], age=600)
+        self._agent("build", [req, self._tool_line("t1", "Bash", {"command": "make"})], age=400)
+        self._agent("old", [req, self._tool_line("o1", "Bash", {"command": "x"})], finished=True, age=600)
+        ctx = statusline.build_context(self.j, now=self.now)
+        states = {a["title"]: a for a in statusline.agent_states(ctx)}
+        self.assertEqual(states["busy"]["status"], "working")
+        self.assertEqual(states["busy"]["desc"], "Edit dma.c")
+        self.assertEqual(states["busy"]["files"], ["dma.c"])
+        self.assertEqual(states["hung"]["status"], "stalled")
+        self.assertEqual(states["build"]["status"], "tools")  # long tool call, not stalled yet
+        self.assertNotIn("old", states)  # finished long ago
+
+        rows = [plain(r) for r in statusline.agent_rows(ctx, 100)]
+        self.assertTrue(rows[0].startswith("! "))  # stalled first
+        self.assertTrue(any("Edit dma.c" in r and "dma.c" in r.split("Edit dma.c")[1] for r in rows))
+
     def test_narrow_terminal_keeps_essentials(self):
         os.environ["COLUMNS"] = "50"
         l1, l2 = self.render().split("\n")
@@ -184,6 +223,14 @@ class RenderTest(unittest.TestCase):
         self.assertEqual({len(ln) for ln in lines}, {46})
         self.assertIn("10%", lines[1])
         self.assertNotIn("5h", "".join(lines))
+
+    def test_cache_mix(self):
+        j = json.loads(json.dumps(self.j))
+        j["context_window"]["current_usage"] = {"input_tokens": 0, "cache_creation_input_tokens": 5000,
+                                                "cache_read_input_tokens": 95000}
+        ctx = statusline.build_context(j, now=self.now)
+        out = plain(statusline.seg_cache_mix(ctx).text)
+        self.assertIn("95% cached +5.0k new", out)
 
     def test_minimal_input(self):
         out = self.render_raw({})
