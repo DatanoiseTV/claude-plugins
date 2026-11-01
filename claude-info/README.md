@@ -9,7 +9,7 @@ A framed grid. Values stay in fixed columns, anything that is normal stays
 quiet, and the graphs only move when something is actually changing.
 
 ```
-╭─ Opus 5.5 medium · ⠹ thinking 12s · 108 t/s ▆█▇▆▅█▇█ ─── claude-plugins ▸ claude-info · main ↑2 ~3 · #3 approved ─╮
+╭─ Opus 5.5 medium · ⠹ thinking 12s · 108 t/s ──────────── claude-plugins ▸ claude-info · main ↑2 ~3 · #3 approved ─╮
 │ ██▍······· 24% 236k/1M │ $6.40  $3.49/h            │ 5h ━━━─┃─── 38%→75% │ cache ▰▰▰▰▱ 47m                       │
 │ ▁▁▁▂▂▂▃▄▅▆▇█ +2.1k/req │ today $194 ··▁···█ Σ$7.84 │ 7d ━━┃───── 22%→65% │ ⠼ 2 agents 98·131 t/s                 │
 ╰─ +Haiku 5.5 12% · +2900 −210 · 1h50 · statusline redesign ──────────────────────────────────────────────────────╯
@@ -21,7 +21,7 @@ quiet, and the graphs only move when something is actually changing.
 | --- | --- |
 | `Opus 5.5 medium` | model, effort, `fast` in fast mode, `@agent` with `--agent` |
 | `⠹ thinking 12s` | live phase of the main thread (`thinking`, `writing`, `tools`) and how long it has lasted; gone when the turn ends |
-| `108 t/s ▆█▇▆` | output tokens per second, averaged, with one bar per recent request |
+| `108 t/s` | output tokens per second, averaged over recent requests (`rate_spark_len` adds a per-request sparkline) |
 | `project ▸ subdir` | project and subdirectory; `+N` for added dirs |
 | `main ↑2 ↓1 !1 +1 ~3 ?2` | branch, ahead/behind, conflicts, staged, modified, untracked; `REBASE`/`MERGE`/... in progress |
 | `#3 approved` | open PR (clickable), coloured by review state |

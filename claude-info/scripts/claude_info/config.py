@@ -54,7 +54,10 @@ DEFAULTS: dict = {
     # whenever the status line is re-rendered (events, refreshInterval).
     "spinner_fps": 1.0,
     "phase_stale_s": 900,
-    "rate_spark_len": 8,
+    # Per-request rate sparkline next to t/s in the title; 0 turns it off.
+    # Off by default: it changes every request and draws the eye away from
+    # the phase indicator.
+    "rate_spark_len": 0,
     "context_spark_len": 12,
     "spend_spark_days": 7,
     "limit_gauge_width": 8,
