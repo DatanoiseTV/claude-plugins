@@ -46,7 +46,7 @@ settings. Add this to `~/.claude/settings.json`:
   "statusLine": {
     "type": "command",
     "command": "/absolute/path/to/claude-plugins/claude-info/scripts/statusline.sh",
-    "refreshInterval": 30
+    "refreshInterval": 2
   }
 }
 ```
