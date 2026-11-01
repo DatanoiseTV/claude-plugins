@@ -81,6 +81,7 @@ DEFAULTS: dict = {
     "spend_spark_days": 7,
     "limit_gauge_width": 8,
     "cache_drain_width": 5,
+    "cache_mix_width": 8,
 
     # Layout: "box" (framed grid) or "lines" (two plain lines)
     "layout": "box",

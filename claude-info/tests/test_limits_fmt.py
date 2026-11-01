@@ -107,6 +107,15 @@ class FmtTest(unittest.TestCase):
         self.assertEqual(g, "━━┃━────")
         self.assertEqual(fmt._ESC_RE.sub("", fmt.drain(0.6, 5, fmt.GREEN)), "▰▰▰▱▱")
 
+    def test_stacked_keeps_small_shares_visible(self):
+        import re
+        bar = fmt.stacked([(980, fmt.GREEN), (18, fmt.YELLOW), (2, fmt.RED)], 8)
+        self.assertEqual(fmt._ESC_RE.sub("", bar), "█" * 8)
+        if fmt._COLOR:
+            runs = {code: len(cells) for code, cells in re.findall(r"\033\[(\d+)m(█+)", bar)}
+            self.assertEqual(runs, {"32": 6, "33": 1, "31": 1})
+        self.assertEqual(len(fmt._ESC_RE.sub("", fmt.stacked([(0, fmt.GREEN)], 5))), 5)
+
     def test_spinner_advances(self):
         self.assertNotEqual(fmt.spinner(0, 1), fmt.spinner(1, 1))
 

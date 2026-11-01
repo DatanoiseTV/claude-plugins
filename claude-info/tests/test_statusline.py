@@ -40,8 +40,11 @@ class RenderTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.env = {k: os.environ.get(k) for k in ("CLAUDE_INFO_CACHE_DIR", "CLAUDE_INFO_CONFIG", "COLUMNS")}
+        self.env = {k: os.environ.get(k) for k in
+                    ("CLAUDE_INFO_CACHE_DIR", "CLAUDE_INFO_CONFIG", "CLAUDE_INFO_PROJECTS_DIR", "COLUMNS")}
         os.environ["CLAUDE_INFO_CACHE_DIR"] = str(root / "cache")
+        # Background refreshes must scan the fixture, not the real transcripts.
+        os.environ["CLAUDE_INFO_PROJECTS_DIR"] = str(root / "projects")
         # Segment tests read the plain two-line layout; the box has its own tests.
         (root / "cfg.json").write_text(json.dumps({"layout": "lines"}))
         os.environ["CLAUDE_INFO_CONFIG"] = str(root / "cfg.json")
@@ -220,6 +223,14 @@ class RenderTest(unittest.TestCase):
         self.assertEqual({len(ln) for ln in lines}, {46})
         self.assertIn("10%", lines[1])
         self.assertNotIn("5h", "".join(lines))
+
+    def test_cache_mix(self):
+        j = json.loads(json.dumps(self.j))
+        j["context_window"]["current_usage"] = {"input_tokens": 0, "cache_creation_input_tokens": 5000,
+                                                "cache_read_input_tokens": 95000}
+        ctx = statusline.build_context(j, now=self.now)
+        out = plain(statusline.seg_cache_mix(ctx).text)
+        self.assertIn("95% cached +5.0k new", out)
 
     def test_minimal_input(self):
         out = self.render_raw({})

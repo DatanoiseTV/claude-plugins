@@ -523,6 +523,34 @@ def seg_cache(ctx: Ctx) -> Optional[Seg]:
     return Seg(" ".join(parts), 75)
 
 
+def seg_cache_mix(ctx: Ctx) -> Optional[Seg]:
+    """How much of the last prompt came from the cache and how much was new,
+    plus what caching has saved this session at list price."""
+    if not ctx.show("cache"):
+        return None
+    cu = ctx.get("context_window", "current_usage", default=None) or {}
+    read = int(cu.get("cache_read_input_tokens") or 0)
+    write = int(cu.get("cache_creation_input_tokens") or 0)
+    fresh = int(cu.get("input_tokens") or 0)
+    total = read + write + fresh
+    if total <= 0:
+        return None
+    share = read / total
+    color = F.GREEN if share >= ctx.cfg["cache_hit_warn"] else F.YELLOW
+    out = ""
+    if ctx.graphs:
+        out = F.stacked([(read, F.GREEN), (write, F.YELLOW), (fresh, F.RED)],
+                        ctx.cfg["cache_mix_width"]) + " "
+    out += F.paint(f"{share * 100:.0f}% cached", color)
+    if write + fresh:
+        out += F.paint(f" +{F.tokens(write + fresh)} new", F.DIM)
+    if ctx.session:
+        actual, uncached = pricing.cache_savings(ctx.prices, usage.by_model(ctx.session["all"]))
+        if uncached - actual >= 0.01:
+            out += F.paint(f" saved {F.money(uncached - actual)}", F.DIM)
+    return Seg(out, 30)
+
+
 def _limit_text(ctx: Ctx, label: str, key: str, used: float, resets_at, window_s: float) -> str:
     """Gauge, usage and the time left at the current pace.
 
@@ -660,7 +688,7 @@ def render_lines(ctx: Ctx, width: Optional[int]) -> str:
     """Compact two-line layout without a frame."""
     line1 = _flat(seg_model(ctx), seg_speed(ctx), seg_model_mix(ctx), seg_location(ctx),
                   seg_git(ctx), seg_pr(ctx), seg_agents(ctx), seg_session_name(ctx))
-    line2 = _flat(seg_context(ctx), seg_cost(ctx), seg_burn(ctx), seg_cache(ctx),
+    line2 = _flat(seg_context(ctx), seg_cost(ctx), seg_burn(ctx), seg_cache(ctx), seg_cache_mix(ctx),
                   seg_limits(ctx), seg_lines(ctx), seg_lifetime(ctx), seg_duration(ctx))
     return fit(line1, width) + "\n" + fit(line2, width)
 
@@ -686,7 +714,7 @@ def render_box(ctx: Ctx, width: Optional[int]) -> str:
                    prio=85),
         box.Column([_cell(seg_spend(ctx)), ""], prio=80),
         # Agents get their own section below the grid; the cell would repeat it.
-        box.Column([_cell(seg_cache(ctx)), ""], prio=75),
+        box.Column([_cell(seg_cache(ctx)), _cell(seg_cache_mix(ctx))], prio=75),
     ]
     left = _parts(seg_model(ctx), seg_phase(ctx), seg_speed(ctx))
     right = _parts(seg_location(ctx), seg_git(ctx), seg_pr(ctx))
