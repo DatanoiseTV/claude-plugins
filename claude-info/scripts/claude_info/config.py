@@ -52,6 +52,8 @@ DEFAULTS: dict = {
 
     # Layout
     "right_margin": 4,
+    # /claude-info width when not writing to a terminal (shown in a code block)
+    "report_width": 100,
     "session_name_max": 28,
 
     "show": {
