@@ -27,6 +27,13 @@ DEFAULTS: dict = {
     # projections swing wildly on a single large request.
     "pace_min_elapsed": 0.08,
     "windows_s": {"five_hour": 18000, "seven_day": 604800},
+    # Span of recent history used for "time left at the current pace", the
+    # minimum history needed before trusting it, and how much to keep.
+    "limit_rate_span_s": {"five_hour": 1800, "seven_day": 21600, "spend": 21600},
+    "limit_rate_min_span_s": 300,
+    "limit_history_keep_s": 86400,
+    # Don't show "~X left" beyond this; at that point it means "plenty".
+    "limit_left_max_s": 14 * 86400,
     "spend_period_days": {"daily": 1, "weekly": 7, "monthly": 30},
 
     # Prompt cache

@@ -17,11 +17,11 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from . import box, config, gitinfo, pricing, totals, usage
+from . import box, config, gitinfo, limits, pricing, totals, usage
 from . import fmt as F
 from .limits import pace
 
@@ -44,6 +44,7 @@ class Ctx:
     summary: Optional[dict] = None   # totals summary
     cols: Optional[int] = None
     graphs: bool = False             # draw sparklines, gauges and spinners
+    limit_hist: dict = field(default_factory=dict)  # sampled usage per limit window
 
     def get(self, *path, default=None):
         cur = self.j
@@ -522,11 +523,24 @@ def seg_cache(ctx: Ctx) -> Optional[Seg]:
     return Seg(" ".join(parts), 75)
 
 
-def _limit_text(ctx: Ctx, label: str, used: float, resets_at, window_s: float) -> str:
+def _limit_text(ctx: Ctx, label: str, key: str, used: float, resets_at, window_s: float) -> str:
+    """Gauge, usage and the time left at the current pace.
+
+    The pace is the rate over the last minutes when there is enough sampled
+    history (see limits.recent_rate), otherwise the average since the window
+    opened. "full in" (red) means the limit is reached before the reset;
+    "~X left" means it would take that long at this pace.
+    """
     cfg = ctx.cfg
     p = pace(used, resets_at, window_s, ctx.now, cfg["pace_min_elapsed"])
-    heading = p.projected if p.projected is not None else used
-    color = F.tier(heading, cfg["limit_warn_pct"], cfg["limit_crit_pct"])
+    rate = limits.recent_rate(ctx.limit_hist.get(key) or [], ctx.now,
+                              cfg["limit_rate_span_s"].get(key, 1800), cfg["limit_rate_min_span_s"])
+    if rate is None and p.projected is not None and p.reset_in:
+        rate = (p.projected - used) / p.reset_in  # window average
+    left = limits.time_left(used, rate)
+    projected = (used + rate * p.reset_in) if rate is not None and p.reset_in is not None else used
+    color = F.tier(projected, cfg["limit_warn_pct"], cfg["limit_crit_pct"])
+
     out = F.paint(label, color) + " "
     if ctx.graphs:
         elapsed = None
@@ -534,12 +548,14 @@ def _limit_text(ctx: Ctx, label: str, used: float, resets_at, window_s: float) -
             elapsed = 100.0 * (1 - p.reset_in / window_s)
         out += F.gauge(used, elapsed, cfg["limit_gauge_width"], color) + " "
     out += F.paint(f"{used:.0f}%", color)
-    if p.will_hit:
-        out += F.paint(f" full in {F.duration(p.full_in)}", F.BOLD, F.RED)
-        out += F.paint(f" ↻{F.duration(p.reset_in)}", F.DIM)
-    elif p.projected is not None and p.projected - used >= 5:
-        out += F.paint(f"→{min(p.projected, 999):.0f}%", color)
-    if not p.will_hit and p.reset_in is not None and used >= cfg["limit_warn_pct"]:
+    hits = left is not None and p.reset_in is not None and left < p.reset_in
+    if used >= 100:
+        out += F.paint(" full", F.BOLD, F.RED)
+    elif hits:
+        out += F.paint(f" full in {F.duration(left)}", F.BOLD, F.RED)
+    elif left is not None and left < cfg["limit_left_max_s"]:
+        out += F.paint(f" ~{F.duration(left)} left", F.DIM)
+    if p.reset_in is not None and (hits or used >= 100 or used >= cfg["limit_warn_pct"]):
         out += F.paint(f" ↻{F.duration(p.reset_in)}", F.DIM)
     return out
 
@@ -554,7 +570,7 @@ def seg_windows(ctx: Ctx) -> List[Seg]:
     for key, label, prio in (("five_hour", "5h", 85), ("seven_day", "7d", 80)):
         w = rl.get(key)
         if w and w.get("used_percentage") is not None:
-            segs.append(Seg(_limit_text(ctx, label, float(w["used_percentage"]),
+            segs.append(Seg(_limit_text(ctx, label, key, float(w["used_percentage"]),
                                         w.get("resets_at"), windows[key]), prio))
     return segs
 
@@ -565,7 +581,7 @@ def seg_spend(ctx: Ctx) -> Optional[Seg]:
     if not spend or spend.get("used_percentage") is None or not ctx.show("limits"):
         return None
     days = ctx.cfg["spend_period_days"].get(spend.get("period", ""), 0)
-    text = _limit_text(ctx, "spend", float(spend["used_percentage"]),
+    text = _limit_text(ctx, "spend", "spend", float(spend["used_percentage"]),
                        spend.get("resets_at"), days * 86400)
     if spend.get("used_usd") is not None and spend.get("limit_usd"):
         text += F.paint(f" {F.money(spend['used_usd'])}/{F.money(spend['limit_usd'])}", F.DIM)
@@ -687,6 +703,32 @@ def render(ctx: Ctx) -> str:
     return render_box(ctx, width)
 
 
+LIMITS_FILE = "limits.json"
+
+
+def update_limit_history(j: dict, cfg: dict, now: float) -> dict:
+    """Sample each limit's usage into a history shared by all sessions
+    (limits are per account), and return it."""
+    path = config.cache_dir() / LIMITS_FILE
+    hist = usage.load_json(path) or {}
+    rl = j.get("rate_limits") or {}
+    changed = False
+    for key in ("five_hour", "seven_day", "spend_limit"):
+        w = rl.get(key) or {}
+        if w.get("used_percentage") is None:
+            continue
+        name = "spend" if key == "spend_limit" else key
+        hist[name], added = limits.record(hist.get(name) or [], now, float(w["used_percentage"]),
+                                          cfg["limit_history_keep_s"])
+        changed |= added
+    if changed:
+        try:
+            usage.save_json(path, hist)
+        except OSError:
+            pass
+    return hist
+
+
 def build_context(j: dict, now: Optional[float] = None) -> Ctx:
     cfg = config.load()
     ctx = Ctx(j=j, cfg=cfg, now=now or time.time(), prices=pricing.default())
@@ -703,6 +745,8 @@ def build_context(j: dict, now: Optional[float] = None) -> Ctx:
                                              j.get("session_id") or Path(tp).stem, ctx.prices)
         except (OSError, ValueError):
             ctx.session = None
+
+    ctx.limit_hist = update_limit_history(j, cfg, ctx.now)
 
     if ctx.show("lifetime"):
         ctx.summary = totals.load_summary()
