@@ -342,4 +342,5 @@ def scan_session(transcript: Path, cache_dir: Path, session_id: str,
         except OSError:
             pass
     return {"main": states.get(str(transcript)) or new_file_state(),
-            "all": list(states.values())}
+            "all": list(states.values()),
+            "files": states}

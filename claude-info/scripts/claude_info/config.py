@@ -41,6 +41,11 @@ DEFAULTS: dict = {
     "model_mix_min_share": 0.03,
     "model_mix_max": 2,
 
+    # Subagents whose transcript is idle this long count as stale, not running.
+    "agent_stale_s": 600,
+    # Up to this many running agents get individual rates; more show a sum.
+    "agents_max_rates": 3,
+
     # Lifetime totals refresh (background, never blocks the status line)
     "lifetime_refresh_s": 60,
     "lifetime_lock_stale_s": 300,

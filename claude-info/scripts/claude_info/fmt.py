@@ -62,7 +62,7 @@ def money(usd: float) -> str:
         return f"${usd / 1000:.1f}k"
     if usd >= 100:
         return f"${usd:.0f}"
-    if usd >= 0.01:
+    if usd >= 0.10:
         return f"${usd:.2f}"
     return f"${usd:.3f}" if usd > 0 else "$0"
 
