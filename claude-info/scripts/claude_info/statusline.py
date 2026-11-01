@@ -110,7 +110,14 @@ def seg_phase(ctx: Ctx) -> Optional[Seg]:
     name, age = ph
     color = _PHASE_STYLE.get(name, F.CYAN)
     spin = F.spinner(ctx.now, ctx.cfg["spinner_fps"])
-    return Seg(F.paint(f"{spin} {name}", color) + F.paint(f" {F.duration(age)}", F.DIM), 92)
+    label = name
+    act = usage.activity(ctx.session["main"])
+    if name == "tools" and act:
+        # Say which tool and on what, rather than just "tools".
+        label = act[: ctx.cfg["activity_title_max"]]
+        if len(act) > len(label):
+            label = label[:-1] + "…"
+    return Seg(F.paint(f"{spin} {label}", color) + F.paint(f" {F.duration(age)}", F.DIM), 92)
 
 
 def seg_context_trend(ctx: Ctx) -> Optional[Seg]:
@@ -226,32 +233,79 @@ def seg_pr(ctx: Ctx) -> Optional[Seg]:
     return Seg(out, 50)
 
 
-def running_agents(ctx: Ctx) -> List[dict]:
-    """Subagents of this session that have not finished. A transcript that
-    has not been written to for a while counts as stale, not running."""
+def agent_states(ctx: Ctx) -> List[dict]:
+    """Subagents of this session with what each is doing.
+
+    status is one of:
+      working  wrote to its transcript recently (phase says what it does)
+      tools    inside a tool call for longer than the stall threshold;
+               normal for builds and tests, so it is not called stalled
+      stalled  no output for longer than the stall threshold otherwise
+      waiting  turn ended but the agent has not reported back yet
+      done     finished; kept on screen briefly, then dropped
+    Agents silent for longer than agent_stale_s are left out entirely.
+    """
     if not ctx.session:
         return []
-    stale = ctx.cfg.get("agent_stale_s", 600)
+    cfg = ctx.cfg
     out = []
-    for path, st in ctx.session.get("files", {}).items():
+    for path in sorted(ctx.session.get("files", {})):  # stable row order
+        st = ctx.session["files"][path]
         if st is ctx.session["main"] or not path.endswith(".jsonl"):
             continue
         meta = usage.load_json(Path(path[: -len(".jsonl")] + ".meta.json")) or {}
-        if meta.get("finished"):
+        quiet = max(0.0, ctx.now - st.get("mtime", 0))
+        ph = usage.phase(st, ctx.now, float("inf"))
+        if meta.get("finished") or usage.handed_back(st):
+            if quiet > cfg["agent_done_show_s"]:
+                continue
+            status, label = "done", "done"
+        elif quiet > cfg["agent_stale_s"]:
             continue
-        if ctx.now - st.get("mtime", 0) > stale:
-            continue
-        out.append({"tps": usage.tokens_per_second(st), "desc": meta.get("description", "")})
+        elif ph is None:
+            status, label = "waiting", f"waiting {F.duration(quiet)}"
+        elif quiet > cfg["agent_stall_s"]:
+            # Long tool calls are normal (builds, tests), up to a point.
+            if ph[0] == "tools" and quiet <= cfg["agent_tool_stall_s"]:
+                status, label = "tools", f"tools {F.duration(ph[1])}"
+            else:
+                status, label = "stalled", f"stalled {F.duration(quiet)}"
+        else:
+            status, label = "working", f"{ph[0]} {F.duration(ph[1])}"
+        out.append({
+            "title": meta.get("description") or Path(path).stem,
+            # What it is doing now; the title only says what it was asked.
+            "desc": usage.activity(st) or meta.get("description") or Path(path).stem,
+            "files": [Path(f).name for f in usage.edited_files(st)],
+            "model": short_model_name(ctx, st.get("last_model", "")) if st.get("last_model") else "",
+            "status": status,
+            "label": label,
+            "phase": ph[0] if ph else "",
+            "tps": usage.tokens_per_second(st),
+            "cost": usage.total([st])["cost"],
+        })
     return out
 
 
+def running_agents(ctx: Ctx) -> List[dict]:
+    return [a for a in agent_states(ctx) if a["status"] != "done"]
+
+
+_AGENT_STYLE = {"working": F.CYAN, "tools": F.YELLOW, "stalled": F.RED,
+                "waiting": F.DIM, "done": F.DIM}
+
+
 def seg_agents(ctx: Ctx) -> Optional[Seg]:
+    """One-cell summary: count, stalled count and output rates."""
     agents = running_agents(ctx)
     if not agents:
         return None
     label = f"{len(agents)} agent" + ("s" if len(agents) != 1 else "")
     spin = F.spinner(ctx.now + 0.5, ctx.cfg["spinner_fps"]) + " " if ctx.graphs else ""
     out = F.paint(spin + label, F.CYAN)
+    stalled = sum(1 for a in agents if a["status"] == "stalled")
+    if stalled:
+        out += F.paint(f" {stalled} stalled", F.RED)
     known = [a["tps"] for a in agents if a["tps"]]
     if not known:
         return Seg(out, 60)
@@ -262,6 +316,90 @@ def seg_agents(ctx: Ctx) -> Optional[Seg]:
         # Many agents: their combined output rate says more than a list.
         out += F.paint(f" Σ{sum(known):.0f} t/s", F.DIM)
     return Seg(out, 60)
+
+
+def agent_rows(ctx: Ctx, inner: int) -> List[str]:
+    """Per-agent table for the box: marker, description, model, state, rate
+    and cost, aligned in columns and fitted to the inner width."""
+    # Problems first, then active, then finished; spawn order within each,
+    # so rows only move when an agent changes state.
+    rank = {"stalled": 0, "working": 1, "tools": 1, "waiting": 2, "done": 3}
+    agents = sorted(agent_states(ctx), key=lambda a: rank[a["status"]])
+    if not agents:
+        return []
+    cap = ctx.cfg["agents_max_rows"]
+    shown = agents if len(agents) <= cap else agents[: cap - 1]
+
+    def marker(a: dict) -> str:
+        if a["status"] in ("working", "tools"):
+            return F.paint(F.spinner(ctx.now + hash(a["desc"]) % 7, ctx.cfg["spinner_fps"]),
+                           _AGENT_STYLE[a["status"]])
+        if a["status"] == "stalled":
+            return F.paint("!", F.BOLD, F.RED)
+        return F.paint("·", F.DIM)
+
+    nfiles = ctx.cfg["agent_files_shown"]
+    cols = {
+        "files": [", ".join(a["files"][:nfiles]) for a in shown],
+        "model": [a["model"] for a in shown],
+        "state": [a["label"] for a in shown],
+        "rate": [f"{a['tps']:.0f} t/s" if a["tps"] else "" for a in shown],
+        "cost": [F.money(a["cost"]) for a in shown],
+    }
+    widths = {k: max((len(v) for v in vs), default=0) for k, vs in cols.items()}
+    widths["files"] = min(widths["files"], ctx.cfg["agent_files_width"])
+    if not widths["files"]:
+        widths.pop("files")
+    gap = 2
+    min_desc = 10
+    # Drop the least useful columns until the description gets some room.
+    order = ["model", "cost", "files", "rate"]
+    while True:
+        fixed = 2 + sum(w + gap for w in widths.values())
+        if inner - fixed >= min_desc or not order:
+            break
+        widths.pop(order.pop(0))
+    # The description only takes what it needs; spare width stays at the end
+    # of the row instead of pushing the numbers to the far edge.
+    longest = max(len(a["desc"]) for a in shown)
+    desc_w = max(1, min(longest, inner - 2 - sum(w + gap for w in widths.values())))
+
+    rows = []
+    for i, a in enumerate(shown):
+        desc = a["desc"] if len(a["desc"]) <= desc_w else a["desc"][: desc_w - 1] + "…"
+        style = _AGENT_STYLE[a["status"]]
+        line = marker(a) + " " + F.paint(desc.ljust(desc_w), F.DIM if a["status"] == "done" else "")
+        if "files" in widths:
+            f = cols["files"][i]
+            f = f if len(f) <= widths["files"] else f[: widths["files"] - 1] + "…"
+            line += " " * gap + F.paint(f.ljust(widths["files"]), F.BLUE)
+        if "model" in widths:
+            line += " " * gap + F.paint(cols["model"][i].ljust(widths["model"]), F.DIM)
+        if "state" in widths:
+            line += " " * gap + F.paint(cols["state"][i].ljust(widths["state"]), style)
+        if "rate" in widths:
+            line += " " * gap + F.paint(cols["rate"][i].rjust(widths["rate"]), F.DIM)
+        if "cost" in widths:
+            line += " " * gap + F.paint(cols["cost"][i].rjust(widths["cost"]), F.GREEN)
+        rows.append(line)
+    if len(agents) > len(shown):
+        rest = agents[len(shown):]
+        stalled = sum(1 for a in rest if a["status"] == "stalled")
+        more = f"  +{len(rest)} more" + (f", {stalled} stalled" if stalled else "")
+        rows.append(F.paint(more, F.RED if stalled else F.DIM))
+    return rows
+
+
+def seg_edited(ctx: Ctx) -> Optional[Seg]:
+    """Files the main thread edited most recently."""
+    if not ctx.session or not ctx.show("edited_files"):
+        return None
+    files = [Path(f).name for f in usage.edited_files(ctx.session["main"])]
+    if not files:
+        return None
+    shown = files[: ctx.cfg["main_files_shown"]]
+    more = f" +{len(files) - len(shown)}" if len(files) > len(shown) else ""
+    return Seg(F.paint("✎ " + ", ".join(shown), F.BLUE) + F.paint(more, F.DIM), 30)
 
 
 def seg_session_name(ctx: Ctx) -> Optional[Seg]:
@@ -531,12 +669,15 @@ def render_box(ctx: Ctx, width: Optional[int]) -> str:
         box.Column([_cell(windows[0]) if windows else "", _cell(windows[1]) if len(windows) > 1 else ""],
                    prio=85),
         box.Column([_cell(seg_spend(ctx)), ""], prio=80),
-        box.Column([_cell(seg_cache(ctx)), _cell(seg_agents(ctx))], prio=75),
+        # Agents get their own section below the grid; the cell would repeat it.
+        box.Column([_cell(seg_cache(ctx)), ""], prio=75),
     ]
     left = _parts(seg_model(ctx), seg_phase(ctx), seg_speed(ctx))
     right = _parts(seg_location(ctx), seg_git(ctx), seg_pr(ctx))
-    footer = _parts(seg_model_mix(ctx), seg_lines(ctx), seg_duration(ctx), seg_session_name(ctx))
-    return box.render(left, right, columns, footer, width)
+    footer = _parts(seg_model_mix(ctx), seg_lines(ctx), seg_edited(ctx), seg_duration(ctx),
+                    seg_session_name(ctx))
+    detail = (lambda inner: agent_rows(ctx, inner)) if ctx.show("agents") else None
+    return box.render(left, right, columns, footer, width, detail)
 
 
 def render(ctx: Ctx) -> str:

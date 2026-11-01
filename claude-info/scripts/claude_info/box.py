@@ -14,7 +14,7 @@ The last column absorbs any spare width so the box spans the terminal.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from . import fmt as F
 
@@ -79,7 +79,10 @@ def _pad(s: str, width: int) -> str:
 
 
 def render(left: List[Part], right: List[Part], columns: List[Column],
-           footer: List[Part], width: Optional[int]) -> str:
+           footer: List[Part], width: Optional[int],
+           detail: Optional[Callable[[int], List[str]]] = None) -> str:
+    """`detail`, given the inner width, returns full-width rows drawn below
+    the grid behind a divider (used for the per-agent table)."""
     b = lambda s: F.paint(s, F.DIM, F.CYAN)  # noqa: E731  border colour
     cols = [c for c in columns if not c.empty]
     rows = max((len(c.cells) for c in cols), default=0)
@@ -116,6 +119,13 @@ def render(left: List[Part], right: List[Part], columns: List[Column],
         for r in keep:
             cells = [_pad(c.cells[r] if r < len(c.cells) else "", w) for c, w in zip(cols, widths)]
             out.append(b("│ ") + sep.join(cells) + b(" │"))
+
+    rows = detail(total - 4) if detail else []
+    if rows:
+        if cols:
+            out.append(b("├" + "─" * (total - 2) + "┤"))
+        for r in rows:
+            out.append(b("│ ") + _pad(r, total - 4) + b(" │"))
 
     ft = join_parts(footer, total - 7)
     if ft:

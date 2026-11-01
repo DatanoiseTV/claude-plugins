@@ -41,8 +41,20 @@ DEFAULTS: dict = {
     "model_mix_min_share": 0.03,
     "model_mix_max": 2,
 
-    # Subagents whose transcript is idle this long count as stale, not running.
-    "agent_stale_s": 600,
+    # Subagents: no transcript output for agent_stall_s marks an agent as
+    # stalled (unless it is inside a tool call); after agent_stale_s it is
+    # treated as abandoned and hidden. Finished agents stay visible for
+    # agent_done_show_s.
+    "agent_stall_s": 180,
+    "agent_tool_stall_s": 900,
+    "agent_stale_s": 1800,
+    "agent_done_show_s": 60,
+    "agents_max_rows": 5,
+    "agent_files_shown": 2,
+    "agent_files_width": 28,
+    "main_files_shown": 3,
+    # Longest tool description in the title, e.g. "Bash: make test".
+    "activity_title_max": 40,
     # Up to this many running agents get individual rates; more show a sum.
     "agents_max_rates": 3,
 
@@ -73,6 +85,8 @@ DEFAULTS: dict = {
     "show": {
         "model_mix": True,
         "git": True,
+        "agents": True,
+        "edited_files": True,
         "pr": True,
         "session_name": True,
         "cache": True,

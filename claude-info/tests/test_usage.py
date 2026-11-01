@@ -148,6 +148,31 @@ class ScanTest(unittest.TestCase):
         s = usage.scan_file(self.path, None, self.prices)
         self.assertEqual(s["ctx_hist"], [1000, 1050])
 
+    def test_activity_and_edited_files(self):
+        def tool(mid, name, inp):
+            return json.dumps({"type": "assistant", "timestamp": "2026-11-01T10:00:00Z", "message": {
+                "id": mid, "model": "claude-opus-5-5", "stop_reason": "tool_use",
+                "content": [{"type": "tool_use", "name": name, "input": inp}],
+                "usage": {"input_tokens": 1, "output_tokens": 1}}})
+        self.write(tool("a", "Edit", {"file_path": "/x/sdma.c"}),
+                   tool("b", "Write", {"file_path": "/x/kick.c"}),
+                   tool("c", "Edit", {"file_path": "/x/sdma.c"}),
+                   tool("d", "Bash", {"command": "cd /very/long/path && make -j8"}))
+        s = usage.scan_file(self.path, None, self.prices)
+        self.assertEqual(usage.activity(s), "Bash: make -j8")
+        self.assertEqual(usage.edited_files(s), ["/x/sdma.c", "/x/kick.c"])
+        self.write(tool("e", "SubagentHandback", {"message": "done"}), mode="a")
+        s = usage.scan_file(self.path, s, self.prices)
+        self.assertTrue(usage.handed_back(s))
+        self.assertEqual(usage.activity(s), "Bash: make -j8")
+
+    def test_summarize_tool(self):
+        self.assertEqual(usage.summarize_tool("Bash", {"command": "ls", "description": "List files"}),
+                         "Bash: List files")
+        self.assertEqual(usage.summarize_tool("Read", {"file_path": "/a/b/c.py"}), "Read c.py")
+        self.assertEqual(usage.summarize_tool("Grep", {"pattern": "TODO"}), 'Grep "TODO"')
+        self.assertEqual(usage.summarize_tool("Weird", {}), "Weird")
+
     def test_local_day(self):
         self.assertRegex(usage.local_day("2026-11-01T10:00:00.123Z"), r"^2026-11-0[12]$")
         self.assertEqual(usage.local_day("garbage"), "")
