@@ -97,3 +97,54 @@ def tier(value: float, warn: float, crit: float) -> str:
     if value >= warn:
         return YELLOW
     return GREEN
+
+
+# ── Small graphics ───────────────────────────────────────────────────────────
+
+SPARK = "▁▂▃▄▅▆▇█"
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def spark(values, floor_zero: bool = True) -> str:
+    """Sparkline. With floor_zero the baseline is 0 (good for spend, rates);
+    without it the range is min..max, which shows the shape of slowly
+    growing series such as context size."""
+    vals = [float(v) for v in values]
+    if not vals:
+        return ""
+    lo = 0.0 if floor_zero else min(vals)
+    hi = max(vals)
+    if hi <= lo:
+        return SPARK[0 if hi <= 0 else 3] * len(vals)
+    # With a zero baseline, a zero is "nothing happened", not "a little".
+    return "".join("·" if floor_zero and v <= 0 else SPARK[min(7, int((v - lo) / (hi - lo) * 7.999))]
+                   for v in vals)
+
+
+def spinner(now: float, fps: float) -> str:
+    """Frame for the current time. The status line is re-rendered on events
+    and on its refresh timer, so consecutive renders advance the spinner."""
+    return SPINNER[int(now * fps) % len(SPINNER)]
+
+
+def gauge(used_pct: float, marker_pct, width: int, color: str) -> str:
+    """Usage line with a marker for how much of the window has elapsed.
+    Filled past the marker means usage is ahead of time."""
+    used = max(0.0, min(100.0, float(used_pct)))
+    filled = round(used / 100 * width)
+    mark = None if marker_pct is None else min(width - 1, int(float(marker_pct) / 100 * width))
+    out = []
+    for i in range(width):
+        if i == mark:
+            out.append(paint("┃", BOLD))
+        elif i < filled:
+            out.append(paint("━", color))
+        else:
+            out.append(paint("─", DIM))
+    return "".join(out)
+
+
+def drain(frac_left: float, width: int, color: str) -> str:
+    """Bar that empties as time runs out."""
+    n = max(0, min(width, round(frac_left * width)))
+    return paint("▰" * n, color) + paint("▱" * (width - n), DIM)

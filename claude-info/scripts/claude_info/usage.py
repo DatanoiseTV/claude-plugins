@@ -24,7 +24,7 @@ from typing import Dict, Iterable, List, Optional
 
 from . import pricing as pricing_mod
 
-STATE_VERSION = 2
+STATE_VERSION = 3
 
 # Duplicate lines of one response are adjacent, so a short window of recent
 # ids is enough to deduplicate without storing every id of every file.
@@ -33,8 +33,11 @@ RECENT_IDS = 64
 # Bucket fields, in storage order.
 FIELDS = ("input", "cw5m", "cw1h", "read", "output", "requests", "cost")
 
-# Throughput samples kept per file; the displayed rate is their weighted mean.
-SPEED_SAMPLES = 6
+# Throughput samples kept per file; the displayed rate is their weighted mean
+# and the sparkline shows each of them.
+SPEED_SAMPLES = 12
+# Context size of the most recent requests, for the growth sparkline.
+CONTEXT_HISTORY = 24
 # Requests shorter than this, or with fewer output tokens, say more about
 # latency than throughput and are left out of the rate.
 SPEED_MIN_SECONDS = 1.0
@@ -45,6 +48,15 @@ SPEED_MIN_TOKENS = 32
 # it is pulled with a regex instead of parsing those often large lines.
 _TS_RE = re.compile(rb'"timestamp":\s*"([^"]+)"')
 _START_RE = re.compile(rb'"type":\s*"(?:api-request|user)"')
+_API_REQUEST_RE = re.compile(rb'"type":\s*"api-request"')
+
+# What the main thread is doing, from the last transcript line:
+#   thinking  request sent, nothing written yet (or a thinking block)
+#   writing   text blocks arriving
+#   tools     the response asked for tools, which are running now
+#   idle      the turn ended
+_BLOCK_PHASE = {"thinking": "thinking", "redacted_thinking": "thinking",
+                "text": "writing", "tool_use": "tools", "server_tool_use": "tools"}
 
 
 def pricing_signature(path: Path = pricing_mod.PRICING_FILE) -> str:
@@ -83,7 +95,36 @@ def new_file_state() -> dict:
             # Throughput tracking: start of the pending request, the response
             # currently being written [id, start, last_line, output_tokens],
             # and finished [output_tokens, seconds] samples.
-            "req_start": None, "cur": None, "samples": []}
+            "req_start": None, "cur": None, "samples": [],
+            # [phase, since_epoch] and recent context sizes per request.
+            "phase": ["idle", 0], "ctx_hist": []}
+
+
+def _set_phase(state: dict, name: str, t: Optional[float]) -> None:
+    """Record the current phase; the start time only moves on a change."""
+    if t is None:
+        return
+    cur = state.get("phase") or ["idle", 0]
+    if cur[0] != name:
+        state["phase"] = [name, t]
+
+
+def phase(state: dict, now: float, stale_s: float) -> Optional[tuple]:
+    """(name, seconds in phase) while the thread is active, else None. A
+    phase that has not changed for `stale_s` is treated as an interrupted
+    turn rather than shown as running forever."""
+    name, since = (state.get("phase") or ["idle", 0])[:2]
+    if name == "idle" or not since:
+        return None
+    age = now - since
+    if age > stale_s or age < 0:
+        return None
+    return name, age
+
+
+def rate_history(state: dict) -> List[float]:
+    """Output rate of each recent request, oldest first."""
+    return [out / secs for out, secs in state.get("samples") or [] if secs > 0]
 
 
 def _close_response(state: dict) -> None:
@@ -187,7 +228,10 @@ def scan_file(path: Path, state: Optional[dict], prices: pricing_mod.Pricing) ->
             if _START_RE.search(raw):
                 m = _TS_RE.search(raw)
                 if m:
-                    _mark_request_start(state, m.group(1).decode("ascii", "replace"))
+                    ts_txt = m.group(1).decode("ascii", "replace")
+                    _mark_request_start(state, ts_txt)
+                    if _API_REQUEST_RE.search(raw):
+                        _set_phase(state, "thinking", epoch(ts_txt))
             continue
         try:
             obj = json.loads(raw)
@@ -197,8 +241,19 @@ def scan_file(path: Path, state: Optional[dict], prices: pricing_mod.Pricing) ->
         if req is None:
             if obj.get("type") in ("api-request", "user"):
                 _mark_request_start(state, obj.get("timestamp") or "")
+                if obj.get("type") == "api-request":
+                    _set_phase(state, "thinking", epoch(obj.get("timestamp") or ""))
             continue
         mid, model, usage, ts = req
+
+        msg = obj.get("message") or {}
+        if msg.get("stop_reason") == "end_turn":
+            _set_phase(state, "idle", epoch(ts))
+        else:
+            blocks = msg.get("content") or []
+            kind = blocks[-1].get("type") if blocks and isinstance(blocks[-1], dict) else ""
+            if kind in _BLOCK_PHASE:
+                _set_phase(state, _BLOCK_PHASE[kind], epoch(ts))
 
         # Throughput: lines of one response share an id and arrive as its
         # content blocks complete, so the last one marks the end.
@@ -218,6 +273,10 @@ def scan_file(path: Path, state: Optional[dict], prices: pricing_mod.Pricing) ->
             recent_set.add(mid)
             if len(recent) > RECENT_IDS:
                 recent_set.discard(recent.pop(0))
+        if not model.startswith("<"):
+            hist = state.setdefault("ctx_hist", [])
+            hist.append(usage.prompt)
+            del hist[:-CONTEXT_HISTORY]
         key = f"{local_day(ts)}|{model}"
         b = buckets.setdefault(key, [0] * len(FIELDS))
         _add(b, (usage.input, usage.cw5m, usage.cw1h, usage.read, usage.output, 1,
