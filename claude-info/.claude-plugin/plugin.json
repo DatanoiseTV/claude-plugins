@@ -1,12 +1,19 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "claude-info",
-  "version": "0.1.0",
-  "description": "Status line and slash command that surface Claude Code session info: model, context-window usage, tokens, cost, duration.",
+  "version": "0.2.0",
+  "description": "Status line and /claude-info report: model mix, output rate, context, prompt-cache state, rate-limit pacing and per-model cost estimates.",
   "author": {
     "name": "DatanoiseTV",
     "email": "6614616+DatanoiseTV@users.noreply.github.com"
   },
   "license": "MIT",
-  "keywords": ["status-line", "context-window", "tokens", "cost", "session-info"]
+  "keywords": [
+    "status-line",
+    "context-window",
+    "tokens",
+    "cost",
+    "rate-limits",
+    "prompt-cache"
+  ]
 }
