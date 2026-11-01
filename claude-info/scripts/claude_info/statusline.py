@@ -89,7 +89,7 @@ def seg_speed(ctx: Ctx) -> Optional[Seg]:
     if tps is None:
         return None
     out = F.paint(f"{tps:.0f} t/s", F.DIM)
-    if ctx.graphs:
+    if ctx.graphs and ctx.cfg["rate_spark_len"] > 0:
         hist = usage.rate_history(ctx.session["main"])[-ctx.cfg["rate_spark_len"]:]
         if len(hist) > 1:
             out += " " + F.paint(F.spark(hist), F.CYAN)
