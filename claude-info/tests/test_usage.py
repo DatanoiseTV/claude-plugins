@@ -102,6 +102,25 @@ class ScanTest(unittest.TestCase):
         r2 = usage.scan_session(self.path, self.dir / "cache", "sess-1", self.prices)
         self.assertEqual(usage.total(r2["all"])["requests"], 2)
 
+    def test_tokens_per_second(self):
+        req = lambda ts: json.dumps({"type": "api-request", "timestamp": ts})  # noqa: E731
+        self.write(
+            req("2026-11-01T10:00:00Z"),
+            assistant("a", out=500, ts="2026-11-01T10:00:04Z"),
+            assistant("a", out=500, ts="2026-11-01T10:00:10Z"),  # last block at +10s
+            req("2026-11-01T10:00:12Z"),
+            assistant("b", out=300, ts="2026-11-01T10:00:15Z"),  # still streaming
+        )
+        s = usage.scan_file(self.path, None, self.prices)
+        # (500 + 300) tokens over (10 + 3) seconds
+        self.assertAlmostEqual(usage.tokens_per_second(s), 800 / 13)
+
+    def test_tokens_per_second_ignores_tiny_requests(self):
+        req = lambda ts: json.dumps({"type": "api-request", "timestamp": ts})  # noqa: E731
+        self.write(req("2026-11-01T10:00:00Z"), assistant("a", out=5, ts="2026-11-01T10:00:03Z"))
+        s = usage.scan_file(self.path, None, self.prices)
+        self.assertIsNone(usage.tokens_per_second(s))
+
     def test_local_day(self):
         self.assertRegex(usage.local_day("2026-11-01T10:00:00.123Z"), r"^2026-11-0[12]$")
         self.assertEqual(usage.local_day("garbage"), "")

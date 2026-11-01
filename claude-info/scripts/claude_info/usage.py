@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,19 @@ RECENT_IDS = 64
 
 # Bucket fields, in storage order.
 FIELDS = ("input", "cw5m", "cw1h", "read", "output", "requests", "cost")
+
+# Throughput samples kept per file; the displayed rate is their weighted mean.
+SPEED_SAMPLES = 6
+# Requests shorter than this, or with fewer output tokens, say more about
+# latency than throughput and are left out of the rate.
+SPEED_MIN_SECONDS = 1.0
+SPEED_MIN_TOKENS = 32
+
+# A request starts at its `api-request` line (or, in older transcripts, the
+# user/tool-result line that triggered it). Only the timestamp is needed, so
+# it is pulled with a regex instead of parsing those often large lines.
+_TS_RE = re.compile(rb'"timestamp":\s*"([^"]+)"')
+_START_RE = re.compile(rb'"type":\s*"(?:api-request|user)"')
 
 
 def pricing_signature(path: Path = pricing_mod.PRICING_FILE) -> str:
@@ -52,8 +66,60 @@ def local_day(ts: str) -> str:
         return ""
 
 
+def epoch(ts: str) -> Optional[float]:
+    if not ts:
+        return None
+    try:
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        return datetime.fromisoformat(ts).timestamp()
+    except ValueError:
+        return None
+
+
 def new_file_state() -> dict:
-    return {"offset": 0, "size": 0, "mtime": 0, "recent": [], "buckets": {}, "last_model": "", "last_ts": ""}
+    return {"offset": 0, "size": 0, "mtime": 0, "recent": [], "buckets": {},
+            "last_model": "", "last_ts": "",
+            # Throughput tracking: start of the pending request, the response
+            # currently being written [id, start, last_line, output_tokens],
+            # and finished [output_tokens, seconds] samples.
+            "req_start": None, "cur": None, "samples": []}
+
+
+def _close_response(state: dict) -> None:
+    cur = state.get("cur")
+    state["cur"] = None
+    if not cur:
+        return
+    _, start, last, out = cur
+    if start is None or last is None:
+        return
+    secs = last - start
+    if secs >= SPEED_MIN_SECONDS and out >= SPEED_MIN_TOKENS:
+        samples = state.setdefault("samples", [])
+        samples.append([out, round(secs, 3)])
+        del samples[:-SPEED_SAMPLES]
+
+
+def _mark_request_start(state: dict, ts: str) -> None:
+    start = epoch(ts)
+    if start is not None:
+        _close_response(state)
+        state["req_start"] = start
+
+
+def tokens_per_second(state: dict) -> Optional[float]:
+    """Weighted output rate over the recent requests of one transcript,
+    including the response still being written."""
+    samples = list(state.get("samples") or [])
+    cur = state.get("cur")
+    if cur and cur[1] is not None and cur[2] is not None:
+        secs = cur[2] - cur[1]
+        if secs >= SPEED_MIN_SECONDS and cur[3] >= SPEED_MIN_TOKENS:
+            samples.append([cur[3], secs])
+    out = sum(s[0] for s in samples)
+    secs = sum(s[1] for s in samples)
+    return out / secs if secs > 0 and out > 0 else None
 
 
 def _add(bucket: List[float], vals: Iterable[float]) -> None:
@@ -118,6 +184,10 @@ def scan_file(path: Path, state: Optional[dict], prices: pricing_mod.Pricing) ->
 
     for raw in consumed.splitlines():
         if b'"usage"' not in raw:
+            if _START_RE.search(raw):
+                m = _TS_RE.search(raw)
+                if m:
+                    _mark_request_start(state, m.group(1).decode("ascii", "replace"))
             continue
         try:
             obj = json.loads(raw)
@@ -125,8 +195,22 @@ def scan_file(path: Path, state: Optional[dict], prices: pricing_mod.Pricing) ->
             continue
         req = parse_request(obj)
         if req is None:
+            if obj.get("type") in ("api-request", "user"):
+                _mark_request_start(state, obj.get("timestamp") or "")
             continue
         mid, model, usage, ts = req
+
+        # Throughput: lines of one response share an id and arrive as its
+        # content blocks complete, so the last one marks the end.
+        t = epoch(ts)
+        cur = state.get("cur")
+        if cur and cur[0] == mid:
+            cur[2] = t if t is not None else cur[2]
+            cur[3] = max(cur[3], usage.output)
+        else:
+            _close_response(state)
+            state["cur"] = [mid, state.get("req_start"), t, usage.output]
+
         if mid and mid in recent_set:
             continue
         if mid:
