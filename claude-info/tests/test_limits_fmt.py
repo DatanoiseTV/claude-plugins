@@ -65,6 +65,21 @@ class FmtTest(unittest.TestCase):
         for pct in (0, 1, 33.3, 50, 99, 100, 140):
             self.assertEqual(len(fmt.bar(pct, 10)), 10, pct)
 
+    def test_spark(self):
+        self.assertEqual(fmt.spark([0, 4, 8]), "·▄█")
+        self.assertEqual(fmt.spark([100, 104, 108], floor_zero=False), "▁▄█")
+        self.assertEqual(fmt.spark([5, 5]), "██")
+        self.assertEqual(fmt.spark([5, 5], floor_zero=False), "▄▄")
+        self.assertEqual(fmt.spark([]), "")
+
+    def test_gauge_and_drain(self):
+        g = fmt._ESC_RE.sub("", fmt.gauge(50, 25, 8, fmt.GREEN))
+        self.assertEqual(g, "━━┃━────")
+        self.assertEqual(fmt._ESC_RE.sub("", fmt.drain(0.6, 5, fmt.GREEN)), "▰▰▰▱▱")
+
+    def test_spinner_advances(self):
+        self.assertNotEqual(fmt.spinner(0, 1), fmt.spinner(1, 1))
+
     def test_visible_len_ignores_escapes(self):
         s = fmt.paint("abc", fmt.RED) + fmt.link("#12", "https://x.y/1")
         self.assertEqual(fmt.visible_len(s), 6)

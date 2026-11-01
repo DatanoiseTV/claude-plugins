@@ -11,7 +11,7 @@
       "name": "claude-info",
       "source": "./claude-info",
       "description": "Status line and usage report: model mix, tok/s, context, cache state, rate-limit pacing and cost estimates.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "category": "developer-tools",
       "tags": [
         "status-line",

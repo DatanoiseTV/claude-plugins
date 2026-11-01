@@ -5,44 +5,56 @@ it costs, and what is about to cost you.
 
 ## Status line
 
-Two lines. Anything that is normal stays quiet; segments appear when there is
-something worth acting on.
+A framed grid. Values stay in fixed columns, anything that is normal stays
+quiet, and the graphs only move when something is actually changing.
 
 ```
-Opus 5.5 medium  121 t/s  +Haiku 5.5 12%  claude-plugins ▸ claude-info  main ↑2 +1 ~3  #12 review  2 agents 98·131 t/s
-███▌······ 35% 352k/1M  $4.12  $2.75/h  cache 3m  5h 46% full in 2h20 ↻2h59  7d 31%→72%  +1156 −23  today $34  Σ$212  1h30
+╭─ Opus 5.5 medium · ⠹ thinking 12s · 108 t/s ▆█▇▆▅█▇█ ─── claude-plugins ▸ claude-info · main ↑2 ~3 · #3 approved ─╮
+│ ██▍······· 24% 236k/1M │ $6.40  $3.49/h            │ 5h ━━━─┃─── 38%→75% │ cache ▰▰▰▰▱ 47m                       │
+│ ▁▁▁▂▂▂▃▄▅▆▇█ +2.1k/req │ today $194 ··▁···█ Σ$7.84 │ 7d ━━┃───── 22%→65% │ ⠼ 2 agents 98·131 t/s                 │
+╰─ +Haiku 5.5 12% · +2900 −210 · 1h50 · statusline redesign ──────────────────────────────────────────────────────╯
 ```
 
-**Line 1: what is running where**
+**Top border: what is running where**
 
-| Segment | Meaning |
+| Part | Meaning |
 | --- | --- |
-| `Opus 5.5 medium` | model, effort level, `fast` when fast mode is on, `@agent` with `--agent` |
-| `121 t/s` | output tokens per second of the main thread, averaged over the last requests |
-| `+Haiku 5.5 12%` | other models this session spent on (after `/model` switches or in subagents), by share of cost |
-| `project ▸ subdir` | project and the subdirectory you are in; `+N` for added dirs |
-| `main ↑2 ↓1 !1 +1 ~3 ?2` | branch, ahead/behind upstream, conflicts, staged, modified, untracked; `REBASE`/`MERGE`/... while one is in progress |
-| `#12 review` | open PR for the branch (clickable), coloured by review state |
-| `2 agents 98·131 t/s` | running subagents and their output rates; a combined `Σ` rate when there are many |
+| `Opus 5.5 medium` | model, effort, `fast` in fast mode, `@agent` with `--agent` |
+| `⠹ thinking 12s` | live phase of the main thread (`thinking`, `writing`, `tools`) and how long it has lasted; gone when the turn ends |
+| `108 t/s ▆█▇▆` | output tokens per second, averaged, with one bar per recent request |
+| `project ▸ subdir` | project and subdirectory; `+N` for added dirs |
+| `main ↑2 ↓1 !1 +1 ~3 ?2` | branch, ahead/behind, conflicts, staged, modified, untracked; `REBASE`/`MERGE`/... in progress |
+| `#3 approved` | open PR (clickable), coloured by review state |
 
-**Line 2: what it costs**
+**Grid: what it costs**
 
-| Segment | Meaning |
-| --- | --- |
-| context bar | context fill, green/yellow/red at 50/80% |
-| `$4.12  $2.75/h` | session cost and burn rate (after 10 minutes) |
-| `cache 3m` | prompt cache expires soon; yellow under a minute |
-| `cache cold: next turn ≈$1.70` | cache expired; what the next turn costs to rebuild it |
-| `new model: next turn re-caches 352k ≈$1.76` | after a model switch the cache starts over, since caches are per model |
-| `miss: tools changed` | a recent cache miss and its cause |
-| `5h 46% full in 2h20 ↻2h59` | rate-limit window; projected at the current pace, coloured by where it is heading |
-| `7d 31%→72%` | projected usage when the window resets |
-| `spend 63% $314/$500` | gateway spend limit, when one applies |
-| `+1156 −23` | lines changed this session |
-| `today $34  Σ$212` | spend today across all projects; lifetime spend in this project |
+| Column | Row 1 | Row 2 |
+| --- | --- | --- |
+| context | fill bar, green/yellow/red at 50/80% | context size of recent requests and average growth; drops show compactions |
+| cost | session cost and burn rate | spend today with a 7-day trend, lifetime spend in this project |
+| limits | 5-hour window | 7-day window |
+| spend | gateway spend limit, when one applies | |
+| activity | prompt cache: drain bar to expiry, `cache cold: next turn ≈$1.70`, `new model: next turn re-caches 236k ≈$1.18`, `miss: tools changed` | running subagents with their output rates |
 
-On a narrow terminal the lowest-priority segments drop out first; model,
-context and cost always stay.
+Rate-limit gauges: `━` is usage, `┃` marks how much of the window has
+passed. Usage left of the marker means you are under pace; past it, you
+will run out before the reset, and the projection says when
+(`5h 62% full in 1h05 ↻2h40`).
+
+**Bottom border:** other models this session spent on (after `/model` or in
+subagents), lines changed, duration, session name.
+
+On a narrow terminal whole columns and title parts drop out by priority;
+model, context and cost always stay. `"layout": "lines"` gives a plain
+two-line version without frame or graphs.
+
+### Animation
+
+The status line is redrawn on Claude Code events and on its
+`refreshInterval` timer. The spinner, phase timer and cache countdown
+advance with wall time, so with `"refreshInterval": 2` they tick while the
+model works, and they freeze when nothing is happening. Each refresh costs
+about 70 ms of CPU; raise the interval to trade smoothness for less work.
 
 ## /claude-info
 
@@ -80,15 +92,15 @@ claude plugin install claude-info@syso-local
 ```
 
 Plugins can't set the status line, so add it to `~/.claude/settings.json`.
-`refreshInterval` keeps time-based segments (cache countdown, rate limits)
-current while the session is idle:
+`refreshInterval` drives the animation and keeps timers current while the
+model works without producing events:
 
 ```json
 {
   "statusLine": {
     "type": "command",
     "command": "/path/to/claude-plugins/claude-info/scripts/statusline.sh",
-    "refreshInterval": 30
+    "refreshInterval": 2
   }
 }
 ```
@@ -143,7 +155,8 @@ claude-info/
 │       ├── totals.py           lifetime totals
 │       ├── limits.py           rate-limit pacing
 │       ├── gitinfo.py          git state
-│       ├── statusline.py       status line segments and layout
+│       ├── statusline.py       status line segments
+│       ├── box.py              framed grid layout
 │       ├── report.py           /claude-info report
 │       ├── fmt.py, config.py
 ├── tests/                      python3 -m unittest (from tests/)

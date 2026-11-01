@@ -121,6 +121,33 @@ class ScanTest(unittest.TestCase):
         s = usage.scan_file(self.path, None, self.prices)
         self.assertIsNone(usage.tokens_per_second(s))
 
+    def test_phase_tracking(self):
+        def block(mid, kind, ts, stop="tool_use"):
+            return json.dumps({"type": "assistant", "timestamp": ts, "message": {
+                "id": mid, "model": "claude-opus-5-5", "stop_reason": stop,
+                "content": [{"type": kind}],
+                "usage": {"input_tokens": 1, "output_tokens": 1}}})
+        req = lambda ts: json.dumps({"type": "api-request", "timestamp": ts})  # noqa: E731
+        self.write(req("2026-11-01T10:00:00Z"))
+        s = usage.scan_file(self.path, None, self.prices)
+        start = usage.epoch("2026-11-01T10:00:00Z")
+        self.assertEqual(usage.phase(s, start + 5, 900), ("thinking", 5))
+        self.write(block("a", "text", "2026-11-01T10:00:06Z"),
+                   block("a", "tool_use", "2026-11-01T10:00:08Z"), mode="a")
+        s = usage.scan_file(self.path, s, self.prices)
+        self.assertEqual(usage.phase(s, start + 10, 900), ("tools", 2))
+        # Stale phases are treated as an interrupted turn.
+        self.assertIsNone(usage.phase(s, start + 2000, 900))
+        self.write(req("2026-11-01T10:00:20Z"),
+                   block("b", "text", "2026-11-01T10:00:25Z", stop="end_turn"), mode="a")
+        s = usage.scan_file(self.path, s, self.prices)
+        self.assertIsNone(usage.phase(s, start + 30, 900))
+
+    def test_context_history(self):
+        self.write(assistant("a", inp=100, cr=900), assistant("b", inp=50, cr=1000))
+        s = usage.scan_file(self.path, None, self.prices)
+        self.assertEqual(s["ctx_hist"], [1000, 1050])
+
     def test_local_day(self):
         self.assertRegex(usage.local_day("2026-11-01T10:00:00.123Z"), r"^2026-11-0[12]$")
         self.assertEqual(usage.local_day("garbage"), "")
